@@ -16,7 +16,6 @@ const POOL_SIZE = Math.max(1, Number(process.env.OCR_WORKERS ?? 2));
 // Resolução usada para renderizar as páginas (scanner costuma ser 200 dpi).
 const RENDER_DPI = 200;
 
-
 /* -------------------------------------------------------------------------- */
 /* Renderização do PDF                                                        */
 /* -------------------------------------------------------------------------- */
@@ -40,12 +39,23 @@ export async function openPdfPages(buffer: Buffer): Promise<PdfPages> {
 
   const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.js");
 
-  // Na Vercel, o pdf.worker.js pode não ser descoberto automaticamente pelo
-  // PDF.js quando o pacote está externalizado pelo Next.js. Apontamos
-  // explicitamente para o worker que existe dentro do pdfjs-dist.
-  pdfjs.GlobalWorkerOptions.workerSrc = require.resolve(
-    "pdfjs-dist/legacy/build/pdf.worker.js"
-  );
+  // Sem Web Worker no Node, o pdfjs faz `eval("require")("./pdf.worker.js")` — um
+  // require dinâmico que o bundler/tracing da Vercel não enxerga, então o arquivo
+  // não vai no deploy ("Cannot find module './pdf.worker.js'"). Importando o worker
+  // de forma estática aqui, ele entra no bundle e o pdfjs o usa via globalThis.
+  if (!g.pdfjsWorker?.WorkerMessageHandler) {
+    const worker: any = await import("pdfjs-dist/legacy/build/pdf.worker.js");
+    g.pdfjsWorker = { WorkerMessageHandler: (worker.WorkerMessageHandler ?? worker.default?.WorkerMessageHandler) };
+  }
+
+  // Diagnóstico: o pdfjs só repassa a mensagem do erro ao montar o "fake worker".
+  // Aguardar o carregamento aqui expõe o erro original (com stack) nos logs da Vercel.
+  try {
+    await pdfjs.PDFWorker._setupFakeWorkerGlobal;
+  } catch (err) {
+    console.error("[nf] falha ao carregar o worker do pdfjs:", (err as Error)?.stack ?? err);
+    throw err;
+  }
 
   const canvasFactory = {
     create(width: number, height: number) {

@@ -13,8 +13,12 @@ const nextConfig = {
     // Garante que o idioma do OCR (português) vá junto em builds/deploys.
     outputFileTracingIncludes: {
       "/api/extract": [
-        "./node_modules/pdfjs-dist/legacy/build/**/*",
         "./node_modules/@tesseract.js-data/por/4.0.0_best_int/**/*",
+        // carregados por require dinâmico (o tracing não os detecta sozinho)
+        "./node_modules/pdfjs-dist/legacy/build/pdf.worker.js",
+        "./node_modules/tesseract.js/src/**/*",
+        "./node_modules/tesseract.js-core/**/*",
+        "./node_modules/wasm-feature-detect/**/*",
       ],
     },
   },
