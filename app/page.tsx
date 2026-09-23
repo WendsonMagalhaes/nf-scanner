@@ -3,7 +3,6 @@
 import { useCallback, useRef, useState } from "react";
 import {
   UploadCloud,
-  FileText,
   Loader2,
   Download,
   Trash2,
@@ -12,6 +11,7 @@ import {
   FileWarning,
 } from "lucide-react";
 import { buildFilename, sanitizeForFilename } from "@/lib/extract";
+import { FILENAME_PATTERN } from "@/lib/app-info";
 
 type Status = "pending" | "processing" | "done" | "error";
 
@@ -72,13 +72,13 @@ export default function Home() {
         prev.map((r) =>
           r.id === row.id
             ? {
-                ...r,
-                status: "done",
-                date: data.date ?? "",
-                nfNumber: data.nfNumber ?? "",
-                supplier: data.supplier ?? "",
-                confidence: data.confidence,
-              }
+              ...r,
+              status: "done",
+              date: data.date ?? "",
+              nfNumber: data.nfNumber ?? "",
+              supplier: data.supplier ?? "",
+              confidence: data.confidence,
+            }
             : r
         )
       );
@@ -152,23 +152,16 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen px-4 py-10 sm:px-8 lg:px-16">
+    <main className="px-4 py-10 sm:px-8 lg:px-16">
       <div className="mx-auto max-w-5xl">
-        <header className="mb-8">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-clay text-paper shadow-sm">
-              <FileText size={22} />
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight">
-                Renomeador de Notas Fiscais
-              </h1>
-              <p className="text-sm text-ink/60">
-                Padrão: DD-MM-AAAA - NF-e NNNNNNNNN - FORNECEDOR
-              </p>
-            </div>
-          </div>
-        </header>
+        <div className="mb-8">
+          <h1 className="text-xl font-semibold tracking-tight">
+            Renomear notas fiscais
+          </h1>
+          <p className="mt-1 text-sm text-ink/60">
+            Padrão: <span className="font-mono">{FILENAME_PATTERN}</span>
+          </p>
+        </div>
 
         {/* Área de upload */}
         <div
@@ -183,11 +176,10 @@ export default function Home() {
             if (e.dataTransfer.files) addFiles(e.dataTransfer.files);
           }}
           onClick={() => inputRef.current?.click()}
-          className={`group flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-6 py-14 text-center transition-colors ${
-            dragOver
+          className={`group flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-6 py-14 text-center transition-colors ${dragOver
               ? "border-clay bg-clay/5"
               : "border-ink/15 bg-white/50 hover:border-clay/50 hover:bg-white"
-          }`}
+            }`}
         >
           <UploadCloud
             size={34}
