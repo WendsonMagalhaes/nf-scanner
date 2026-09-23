@@ -16,6 +16,7 @@ const POOL_SIZE = Math.max(1, Number(process.env.OCR_WORKERS ?? 2));
 // Resolução usada para renderizar as páginas (scanner costuma ser 200 dpi).
 const RENDER_DPI = 200;
 
+
 /* -------------------------------------------------------------------------- */
 /* Renderização do PDF                                                        */
 /* -------------------------------------------------------------------------- */
@@ -38,6 +39,13 @@ export async function openPdfPages(buffer: Buffer): Promise<PdfPages> {
   g.Path2D ??= (canvasLib as any).Path2D;
 
   const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.js");
+
+  // Na Vercel, o pdf.worker.js pode não ser descoberto automaticamente pelo
+  // PDF.js quando o pacote está externalizado pelo Next.js. Apontamos
+  // explicitamente para o worker que existe dentro do pdfjs-dist.
+  pdfjs.GlobalWorkerOptions.workerSrc = require.resolve(
+    "pdfjs-dist/legacy/build/pdf.worker.js"
+  );
 
   const canvasFactory = {
     create(width: number, height: number) {
