@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { buildFilename, sanitizeForFilename, type TipoDoc } from "@/lib/extract";
 import { FILENAME_PATTERN } from "@/lib/app-info";
+import { adicionarHistorico, lerAprendidos, memorizarFornecedor } from "@/lib/storage";
 
 type Status = "pending" | "processing" | "done" | "error";
 
@@ -29,27 +30,6 @@ interface Row {
   /** "baixa" = dados extraídos sem confirmação (conferir); vira "alta" quando o usuário edita */
   confidence?: "alta" | "baixa";
   error?: string;
-}
-
-const LS_KEY = "nf-fornecedores";
-
-/** Correções de nome já feitas pelo usuário: CNPJ raiz (8 dígitos) -> nome. */
-function lerAprendidos(): Record<string, string> {
-  try {
-    return JSON.parse(localStorage.getItem(LS_KEY) ?? "{}");
-  } catch {
-    return {};
-  }
-}
-
-function memorizarFornecedor(cnpj: string | undefined, nome: string) {
-  const raiz = (cnpj ?? "").replace(/\D/g, "").slice(0, 8);
-  if (raiz.length < 8 || !nome.trim()) return;
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify({ ...lerAprendidos(), [raiz]: nome.trim().toUpperCase() }));
-  } catch {
-    /* navegador sem localStorage: segue sem memorizar */
-  }
 }
 
 function newId() {
@@ -167,6 +147,17 @@ export default function Home() {
       }
 
       const blob = await zip.generateAsync({ type: "blob" });
+      // registra no Histórico (tela /historico)
+      adicionarHistorico(
+        ready.map((r) => ({
+          arquivoOriginal: r.file.name,
+          nomeFinal: suggestedName(r)!,
+          tipo: r.docType,
+          data: r.date,
+          numero: r.nfNumber,
+          fornecedor: r.supplier,
+        }))
+      );
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
