@@ -15,8 +15,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Nenhum arquivo enviado" }, { status: 400 });
     }
 
+    // nomes que o usuário já corrigiu antes (CNPJ raiz -> nome), guardados no navegador
+    let extras: Record<string, string> | undefined;
+    try {
+      const raw = formData.get("fornecedores");
+      if (typeof raw === "string" && raw) extras = JSON.parse(raw);
+    } catch {
+      extras = undefined;
+    }
+
     const buffer = Buffer.from(await file.arrayBuffer());
-    const result = await extractFromPdfBuffer(buffer);
+    const result = await extractFromPdfBuffer(buffer, extras);
 
     return NextResponse.json({
       originalName: file.name,

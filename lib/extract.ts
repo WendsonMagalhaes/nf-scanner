@@ -11,11 +11,29 @@
  *    ignorando destinatário, pagador e transportadora.
  */
 
+import { MEU_CNPJ, MEUS_NOMES, NOME_NOTA_DE_SAIDA } from "./config";
+import { nomePorCnpj } from "./fornecedores";
+
 export type Confianca = "alta" | "baixa";
+export type TipoDoc = "NFe" | "NFSe";
+
+/** Pistas vindas de fora do texto (código de barras, OCR dedicado, aprendizado do usuário). */
+export interface ExtractHints {
+  /** chave de 44 dígitos lida do código de barras */
+  chave?: string | null;
+  /** nº da NFS-e lido no quadro do canto superior direito */
+  nfseNumero?: string | null;
+  /** CNPJ(raiz) -> nome aprendido/corrigido pelo usuário */
+  fornecedoresExtras?: Record<string, string>;
+}
 
 export interface ExtractedData {
+  /** NF-e (produto, DANFE) ou NFS-e (serviço, prefeitura) */
+  docType: TipoDoc;
+  /** "saida" = nota emitida pela sua empresa (venda) */
+  direcao: "entrada" | "saida";
   date: string | null; // dd-mm-aaaa
-  nfNumber: string | null; // 9 dígitos
+  nfNumber: string | null; // NF-e: 9 dígitos; NFS-e: como impresso
   supplier: string | null;
   supplierCnpj: string | null;
   chaveAcesso: string | null;
@@ -127,6 +145,66 @@ function acharChave(lines: string[]): string | null {
   return best;
 }
 
+/**
+ * Conserta chaves lidas com 1 dígito errado/faltando/sobrando (erro típico de OCR).
+ * Só aceita se exatamente UM candidato satisfizer TODAS as validações
+ * (UF, mês, modelo 55, CNPJ e dígito verificador) — muito improvável ser falso positivo.
+ */
+export function repararChave(lines: string[]): string | null {
+  const grupos: string[] = [];
+  lines.forEach((l, i) => {
+    const d = l.replace(/\D/g, "");
+    if (d.length >= 42 && d.length <= 46) grupos.push(d);
+    if (i + 1 < lines.length) {
+      const d2 = (l + lines[i + 1]).replace(/\D/g, "");
+      if (d2.length >= 42 && d2.length <= 46 && d2 !== d) grupos.push(d2);
+    }
+  });
+  for (const d of grupos) {
+    const achados = new Set<string>();
+    const tenta = (k: string) => {
+      if (chaveValida(k)) achados.add(k);
+    };
+    // janelas de 44 dígitos, com 1 substituição
+    for (let off = 0; off + 44 <= d.length; off++) {
+      const base = d.slice(off, off + 44);
+      for (let i = 0; i < 44; i++)
+        for (let c = 0; c <= 9; c++) if (String(c) !== base[i]) tenta(base.slice(0, i) + c + base.slice(i + 1));
+    }
+    // 43 dígitos: falta um -> insere
+    if (d.length >= 43)
+      for (let off = 0; off + 43 <= d.length; off++) {
+        const base = d.slice(off, off + 43);
+        for (let i = 0; i <= 43; i++) for (let c = 0; c <= 9; c++) tenta(base.slice(0, i) + c + base.slice(i));
+      }
+    // 45 dígitos: sobra um -> remove
+    if (d.length >= 45)
+      for (let off = 0; off + 45 <= d.length; off++) {
+        const base = d.slice(off, off + 45);
+        for (let i = 0; i < 45; i++) tenta(base.slice(0, i) + base.slice(i + 1));
+      }
+    if (achados.size === 1) return [...achados][0];
+  }
+  return null;
+}
+
+/** CNPJs válidos (com dígito verificador) que aparecem no texto, na ordem, sem o da sua empresa. */
+function cnpjsDoTexto(lines: string[]): string[] {
+  const out: string[] = [];
+  for (const l of lines) {
+    for (const m of l.matchAll(/(?<!\d)(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})(?!\d)/g)) {
+      const c = m[1].replace(/\D/g, "");
+      if (cnpjValido(c) && c !== MEU_CNPJ && !out.includes(c)) out.push(c);
+    }
+  }
+  return out;
+}
+
+function ehNomeMeu(nome: string): boolean {
+  const f = fold(nome);
+  return MEUS_NOMES.some((m) => f.includes(m));
+}
+
 function formatCnpj(c: string): string {
   return c.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
 }
@@ -213,6 +291,10 @@ function acharNumeroNF(lines: string[]): string | null {
     for (const m of line.matchAll(/(?<![\d.,])(\d{3}\.\d{3}\.\d{3})(?![\d]|[.,]\d)/g)) {
       vote(m[1].replace(/\D/g, ""), 2);
     }
+    // canhoto/cabeçalho: "NF-e Nº 012252", "N° 038463", "N. 000004130"
+    for (const m of line.matchAll(/(?<![A-Za-z])N\s*(?:[º°]|\.)\s*\.?\s*(\d[\d.]{2,12}\d)(?![\d\/,])/g)) {
+      vote(m[1].replace(/\D/g, ""), 1);
+    }
     // boleto: "Número do documento 161683/1"
     const doc = fold(line).match(/(?:DOCUMENTO|NUMERO)\D{0,20}?(\d{4,9})\s*\/\s*\d/);
     if (doc) vote(doc[1], 1);
@@ -244,6 +326,8 @@ function limparNome(nome: string): string | null {
   }
   n = tokens.join(" ").replace(/^[^A-Z0-9]+|[\s\-–—|_:;,]+$/g, "").trim();
   if (n.length < 5 || /FIDC|MULTISSETORIAL/.test(n)) return null;
+  // rótulos de campo do DANFE lidos como se fossem nome (lixo típico de OCR)
+  if (/EMISSAO|CNPJ|CPF|RAZAO|SOCIAL|FRETE|DANFE|RESPONSAVEL|ANTT|PLACA|DATA DE|DATA DA|NATUREZA|INSCRICAO/.test(n)) return null;
   if (tokens.length < 2) return null;
   return n;
 }
@@ -299,7 +383,7 @@ function acharFornecedor(
   // 2) candidatos
   const variantes = new Map<string, Variante>();
   const add = (nome: string, fonte: Fonte) => {
-    if (ehOutro(nome)) return;
+    if (ehOutro(nome) || ehNomeMeu(nome)) return;
     const v = variantes.get(nome) ?? { nome, fontes: new Set<Fonte>() };
     v.fontes.add(fonte);
     variantes.set(nome, v);
@@ -375,27 +459,139 @@ function legacySupplier(lines: string[]): string | null {
 }
 
 /* -------------------------------------------------------------------------- */
+/* NFS-e (nota de serviço da prefeitura — não tem chave de 44 dígitos)         */
+/* -------------------------------------------------------------------------- */
+
+function ehNfse(lines: string[]): boolean {
+  const t = fold(lines.join(" "));
+  return /PRESTADOR DE SERVICOS/.test(t) && /(TOMADOR DE SERVICOS|NFS-?E|NOTA FISCAL DE SERVICOS)/.test(t);
+}
+
+function dataValida(dd: string, mm: string, yyyy: string) {
+  return Number(dd) >= 1 && Number(dd) <= 31 && Number(mm) >= 1 && Number(mm) <= 12 && Number(yyyy) >= 2000 && Number(yyyy) <= 2100;
+}
+
+function numeroNfse(lines: string[], hint?: string | null): string | null {
+  const h = (hint ?? "").replace(/\D/g, "");
+  if (/^\d{7}$/.test(h)) return h;
+  // "Nota: 202600" seguido do nº (7 dígitos) na mesma linha ou nas próximas
+  for (let i = 0; i < lines.length; i++) {
+    if (!/NOTA\s*:/i.test(lines[i])) continue;
+    for (let j = i; j <= Math.min(i + 3, lines.length - 1); j++) {
+      const m = lines[j].replace(/(?<=\d)\s+(?=\d)/g, "").match(/(?<!\d)(\d{7})(?!\d)/);
+      if (m && !/^20\d{5}$/.test(m[1])) return m[1];
+    }
+  }
+  return null;
+}
+
+function extrairNfse(lines: string[], hints: ExtractHints, text: string): ExtractedData {
+  // data: linha do "Emissão (Horário de Brasília)" e as seguintes
+  let date: string | null = null;
+  for (let i = 0; i < lines.length && !date; i++) {
+    if (!/EMISS/.test(fold(lines[i]))) continue;
+    for (let j = i; j <= Math.min(i + 2, lines.length - 1) && !date; j++) {
+      const m = lines[j].match(/(?<!\d)(\d{2})[\/.\-](\d{2})[\/.\-](\d{4})(?!\d)/);
+      if (m && dataValida(m[1], m[2], m[3])) date = `${m[1]}-${m[2]}-${m[3]}`;
+    }
+  }
+
+  // bloco do PRESTADOR (até o TOMADOR)
+  const L = lines.map(fold);
+  const iP = L.findIndex((l) => /PRESTADOR DE SERVICOS/.test(l));
+  let iT = L.findIndex((l, i) => i > iP && /TOMADOR DE SERVICOS/.test(l));
+  if (iT < 0) iT = L.length;
+  const bloco = lines.slice(iP + 1, iT);
+  const blocoF = L.slice(iP + 1, iT);
+
+  const cnpj = cnpjsDoTexto(bloco)[0] ?? null;
+
+  let nome: string | null = null;
+  const iR = blocoF.findIndex((l) => /^RAZAO SOCIAL\b/.test(l));
+  const candidatos = iR >= 0 ? bloco.slice(iR + 1) : bloco;
+  for (const c of candidatos) {
+    const f = fold(c);
+    if (/^(NOME FANTASIA|EMAIL|CPF|INSCRICAO|ENDERECO|RAZAO)/.test(f)) continue;
+    if (/@|CEP|AVENIDA|RUA /.test(f)) continue;
+    const letras = (f.match(/[A-Z]/g) ?? []).length;
+    const digitos = (f.match(/\d/g) ?? []).length;
+    if (letras >= 5 && digitos <= letras * 0.2) {
+      nome = f.replace(/[^A-Z0-9&.'\/ -]/g, " ").replace(/\s+/g, " ").trim();
+      break;
+    }
+  }
+
+  const nomeDic = nomePorCnpj(cnpj, hints.fornecedoresExtras);
+  const nf = numeroNfse(lines, hints.nfseNumero);
+  const supplier = nomeDic ?? nome;
+
+  return {
+    docType: "NFSe",
+    direcao: "entrada",
+    date,
+    nfNumber: nf,
+    supplier,
+    supplierCnpj: cnpj ? formatCnpj(cnpj) : null,
+    chaveAcesso: null,
+    // "alta" = nº e data lidos + fornecedor conhecido pelo CNPJ (dicionário/aprendido)
+    confidence: date && nf && cnpj && nomeDic ? "alta" : "baixa",
+    rawTextPreview: text.slice(0, 400),
+  };
+}
+
+/** Nome do destinatário (cliente) — usado quando a nota foi emitida pela sua própria empresa. */
+function acharDestinatario(lines: string[]): string | null {
+  const L = lines.map(fold);
+  const i = L.findIndex((l) => /DESTINATARIO/.test(l) && /REMETENTE/.test(l));
+  if (i < 0) return null;
+  for (let j = i + 1; j <= Math.min(i + 4, lines.length - 1); j++) {
+    if (/^(NOME|RAZAO|CNPJ|CPF|ENDERECO|DATA)/.test(L[j])) continue;
+    if (/\d{2}\.\d{3}/.test(L[j])) continue;
+    if ((L[j].match(/[A-Z]/g) ?? []).length >= 4) return L[j].replace(/\s+/g, " ").trim();
+  }
+  return null;
+}
+
+/* -------------------------------------------------------------------------- */
 /* API pública                                                                */
 /* -------------------------------------------------------------------------- */
 
-export function extractFromText(text: string): ExtractedData {
+export function extractFromText(text: string, hints: ExtractHints = {}): ExtractedData {
   const lines = toLines(text);
-  const chave = acharChave(lines);
+  const doBarcode = hints.chave && chaveValida(hints.chave) ? hints.chave : null;
+  const chave = doBarcode ?? acharChave(lines) ?? repararChave(lines);
+
+  if (!chave && ehNfse(lines)) return extrairNfse(lines, hints, text);
 
   const nfNumber = chave ? chave.slice(25, 34) : acharNumeroNF(lines);
   const data = acharData(lines, chave);
   const date = data.date ?? (chave ? null : legacyDate(text));
   const forn = acharFornecedor(lines, chave ? chave.slice(6, 20) : null);
-  const supplier = forn.nome ?? legacySupplier(lines);
 
-  const confidence: Confianca =
-    chave && data.confirmada && nfNumber && forn.nome && forn.confianca === "alta" ? "alta" : "baixa";
+  // CNPJ do emitente: da chave; sem chave, o 1º CNPJ válido que não seja o seu
+  const cnpjEmit = chave ? chave.slice(6, 20) : cnpjsDoTexto(lines)[0] ?? null;
+  const nomeDic = nomePorCnpj(cnpjEmit, hints.fornecedoresExtras);
+  const saida = cnpjEmit === MEU_CNPJ || (chave ? chave.slice(6, 20) === MEU_CNPJ : false);
+
+  let supplier: string | null;
+  let fornecedorOk: boolean;
+  if (saida && NOME_NOTA_DE_SAIDA === "destinatario") {
+    supplier = acharDestinatario(lines);
+    fornecedorOk = !!supplier;
+  } else {
+    supplier = nomeDic ?? forn.nome ?? legacySupplier(lines);
+    fornecedorOk = !!nomeDic || (!!forn.nome && forn.confianca === "alta");
+  }
+
+  const confidence: Confianca = chave && data.confirmada && nfNumber && supplier && fornecedorOk ? "alta" : "baixa";
 
   return {
+    docType: "NFe",
+    direcao: saida ? "saida" : "entrada",
     date,
     nfNumber,
     supplier,
-    supplierCnpj: chave ? formatCnpj(chave.slice(6, 20)) : null,
+    supplierCnpj: cnpjEmit ? formatCnpj(cnpjEmit) : null,
     chaveAcesso: chave,
     confidence,
     rawTextPreview: lines.join("\n").slice(0, 400),
@@ -412,13 +608,18 @@ export function sanitizeForFilename(s: string): string {
     .trim();
 }
 
+export function rotuloTipo(tipo: TipoDoc): string {
+  return tipo === "NFSe" ? "NFS-e" : "NF-e";
+}
+
 export function buildFilename(
   date: string,
   nfNumber: string,
-  supplier: string
+  supplier: string,
+  tipo: TipoDoc = "NFe"
 ): string {
   const d = sanitizeForFilename(date);
   const n = sanitizeForFilename(nfNumber);
   const s = sanitizeForFilename(supplier).toUpperCase();
-  return `${d} - NF-e ${n} - ${s}.pdf`;
+  return `${d} - ${rotuloTipo(tipo)} ${n} - ${s}.pdf`;
 }

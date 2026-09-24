@@ -20,10 +20,31 @@ const RENDER_DPI = 200;
 /* Renderização do PDF                                                        */
 /* -------------------------------------------------------------------------- */
 
+export type Rotacao = 0 | 90 | 180 | 270;
+
+export interface RegiaoPagina {
+  /** fração vertical inicial/final (0..1) da página JÁ girada */
+  y0?: number;
+  y1?: number;
+  /** recorte horizontal (0..1); útil para o quadro do nº da NFS-e no canto */
+  x0?: number;
+  x1?: number;
+  /** converte para preto e branco (ajuda em fundos cinza) */
+  binarizar?: number;
+  /** giro horário, em graus, aplicado antes do recorte */
+  rotacao?: Rotacao;
+  /** multiplicador sobre RENDER_DPI (ex.: 0.5 = leitura rápida, 1.5 = detalhe) */
+  escala?: number;
+}
+
 export interface PdfPages {
   numPages: number;
   /** PNG da página (1-based), recortado para a fração `cropTop` do topo. */
   renderTop(pageNumber: number, cropTop?: number): Promise<Buffer>;
+  /** PNG de uma região da página, com giro/escala opcionais. */
+  renderRegion(pageNumber: number, regiao?: RegiaoPagina): Promise<Buffer>;
+  /** Pixels crus (para leitura de código de barras). */
+  renderPixels(pageNumber: number, regiao?: RegiaoPagina): Promise<{ data: Uint8ClampedArray; width: number; height: number }>;
   destroy(): Promise<void>;
 }
 
@@ -82,31 +103,88 @@ export async function openPdfPages(buffer: Buffer): Promise<PdfPages> {
   });
   const doc = await loadingTask.promise;
 
+  // Página inteira renderizada uma única vez (várias passadas reaproveitam).
+  const cache = new Map<number, any>();
+  async function paginaCompleta(pageNumber: number) {
+    const hit = cache.get(pageNumber);
+    if (hit) return hit;
+    const page = await doc.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: RENDER_DPI / 72 });
+    const width = Math.ceil(viewport.width);
+    const height = Math.ceil(viewport.height);
+    const { canvas, context } = canvasFactory.create(width, height);
+    // fundo branco (páginas sem fundo sairiam transparentes/pretas no PNG)
+    (context as any).fillStyle = "#ffffff";
+    (context as any).fillRect(0, 0, width, height);
+    await page.render({ canvasContext: context, viewport, canvasFactory }).promise;
+    page.cleanup();
+    cache.set(pageNumber, canvas);
+    return canvas;
+  }
+
+  async function recortar(pageNumber: number, r: RegiaoPagina = {}) {
+    const src = await paginaCompleta(pageNumber);
+    const rot = r.rotacao ?? 0;
+    let base = src;
+    if (rot !== 0) {
+      const swap = rot === 90 || rot === 270;
+      const w = swap ? src.height : src.width;
+      const h = swap ? src.width : src.height;
+      base = createCanvas(w, h);
+      const ctx = base.getContext("2d");
+      if (rot === 90) ctx.translate(w, 0);
+      else if (rot === 180) ctx.translate(w, h);
+      else ctx.translate(0, h);
+      ctx.rotate((rot * Math.PI) / 180);
+      ctx.drawImage(src as any, 0, 0);
+    }
+    const y0 = Math.round(base.height * Math.max(0, r.y0 ?? 0));
+    const y1 = Math.round(base.height * Math.min(1, r.y1 ?? 1));
+    const x0 = Math.round(base.width * Math.max(0, r.x0 ?? 0));
+    const x1 = Math.round(base.width * Math.min(1, r.x1 ?? 1));
+    const cropH = Math.max(1, y1 - y0);
+    const cropW = Math.max(1, x1 - x0);
+    const k = r.escala ?? 1;
+    const outW = Math.max(1, Math.round(cropW * k));
+    const outH = Math.max(1, Math.round(cropH * k));
+    const out = createCanvas(outW, outH);
+    const octx = out.getContext("2d");
+    octx.fillStyle = "#ffffff";
+    octx.fillRect(0, 0, outW, outH);
+    octx.drawImage(base as any, x0, y0, cropW, cropH, 0, 0, outW, outH);
+    if (r.binarizar) {
+      const img = octx.getImageData(0, 0, outW, outH);
+      const d = img.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const g = d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11;
+        d[i] = d[i + 1] = d[i + 2] = g < r.binarizar ? 0 : 255;
+      }
+      octx.putImageData(img, 0, 0);
+    }
+    return out;
+  }
+
   return {
     numPages: doc.numPages as number,
 
     async renderTop(pageNumber: number, cropTop = 1) {
-      const page = await doc.getPage(pageNumber);
-      const viewport = page.getViewport({ scale: RENDER_DPI / 72 });
-      const width = Math.ceil(viewport.width);
-      const height = Math.ceil(viewport.height);
+      const out = await recortar(pageNumber, { y0: 0, y1: cropTop });
+      return out.toBuffer("image/png");
+    },
 
-      const { canvas, context } = canvasFactory.create(width, height);
-      // fundo branco (páginas sem fundo sairiam transparentes/pretas no PNG)
-      (context as any).fillStyle = "#ffffff";
-      (context as any).fillRect(0, 0, width, height);
-      await page.render({ canvasContext: context, viewport, canvasFactory }).promise;
-      page.cleanup();
+    async renderRegion(pageNumber: number, regiao?: RegiaoPagina) {
+      const out = await recortar(pageNumber, regiao);
+      return out.toBuffer("image/png");
+    },
 
-      const cropH = Math.max(1, Math.round(height * Math.min(1, cropTop)));
-      const out = createCanvas(width, cropH);
-      out.getContext("2d").drawImage(canvas as any, 0, 0, width, cropH, 0, 0, width, cropH);
-      const png = out.toBuffer("image/png");
-      canvasFactory.destroy({ canvas } as any);
-      return png;
+    async renderPixels(pageNumber: number, regiao?: RegiaoPagina) {
+      const out = await recortar(pageNumber, regiao);
+      const img = out.getContext("2d").getImageData(0, 0, out.width, out.height);
+      return { data: img.data, width: out.width, height: out.height };
     },
 
     async destroy() {
+      cache.clear();
       await doc.destroy();
     },
   };

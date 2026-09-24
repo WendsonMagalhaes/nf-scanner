@@ -10,7 +10,7 @@ import {
   AlertTriangle,
   FileWarning,
 } from "lucide-react";
-import { buildFilename, sanitizeForFilename } from "@/lib/extract";
+import { buildFilename, sanitizeForFilename, type TipoDoc } from "@/lib/extract";
 import { FILENAME_PATTERN } from "@/lib/app-info";
 
 type Status = "pending" | "processing" | "done" | "error";
@@ -22,9 +22,34 @@ interface Row {
   date: string; // dd-mm-aaaa
   nfNumber: string;
   supplier: string;
+  /** NF-e (produto) ou NFS-e (serviço) */
+  docType: TipoDoc;
+  /** CNPJ do emitente (14 dígitos) — usado para memorizar correções de nome */
+  cnpj?: string;
   /** "baixa" = dados extraídos sem confirmação (conferir); vira "alta" quando o usuário edita */
   confidence?: "alta" | "baixa";
   error?: string;
+}
+
+const LS_KEY = "nf-fornecedores";
+
+/** Correções de nome já feitas pelo usuário: CNPJ raiz (8 dígitos) -> nome. */
+function lerAprendidos(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(LS_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function memorizarFornecedor(cnpj: string | undefined, nome: string) {
+  const raiz = (cnpj ?? "").replace(/\D/g, "").slice(0, 8);
+  if (raiz.length < 8 || !nome.trim()) return;
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({ ...lerAprendidos(), [raiz]: nome.trim().toUpperCase() }));
+  } catch {
+    /* navegador sem localStorage: segue sem memorizar */
+  }
 }
 
 function newId() {
@@ -50,6 +75,7 @@ export default function Home() {
       date: "",
       nfNumber: "",
       supplier: "",
+      docType: "NFe" as TipoDoc,
     }));
 
     setRows((prev) => [...prev, ...newRows]);
@@ -64,6 +90,7 @@ export default function Home() {
     try {
       const fd = new FormData();
       fd.append("file", row.file);
+      fd.append("fornecedores", JSON.stringify(lerAprendidos()));
       const res = await fetch("/api/extract", { method: "POST", body: fd });
       if (!res.ok) throw new Error("Falha ao extrair dados do PDF");
       const data = await res.json();
@@ -77,6 +104,8 @@ export default function Home() {
               date: data.date ?? "",
               nfNumber: data.nfNumber ?? "",
               supplier: data.supplier ?? "",
+              docType: (data.docType as TipoDoc) ?? "NFe",
+              cnpj: data.supplierCnpj ?? undefined,
               confidence: data.confidence,
             }
             : r
@@ -110,7 +139,7 @@ export default function Home() {
 
   function suggestedName(row: Row) {
     if (!row.date || !row.nfNumber || !row.supplier) return null;
-    return buildFilename(row.date, row.nfNumber, row.supplier);
+    return buildFilename(row.date, row.nfNumber, row.supplier, row.docType);
   }
 
   const readyCount = rows.filter((r) => r.status === "done" && suggestedName(r)).length;
@@ -226,7 +255,7 @@ export default function Home() {
                   <tr className="border-b border-ink/10 bg-sand/60 text-left text-xs uppercase tracking-wide text-ink/50">
                     <th className="px-4 py-3 font-medium">Arquivo original</th>
                     <th className="px-4 py-3 font-medium">Data</th>
-                    <th className="px-4 py-3 font-medium">Nº NF-e</th>
+                    <th className="px-4 py-3 font-medium">Tipo / Nº</th>
                     <th className="px-4 py-3 font-medium">Fornecedor</th>
                     <th className="px-4 py-3 font-medium">Status</th>
                     <th className="px-4 py-3"></th>
@@ -254,16 +283,28 @@ export default function Home() {
                           />
                         </td>
                         <td className="px-4 py-3">
-                          <input
-                            value={row.nfNumber}
-                            onChange={(e) =>
-                              updateRow(row.id, {
-                                nfNumber: e.target.value.replace(/\D/g, ""),
-                              })
-                            }
-                            placeholder="000372196"
-                            className="w-28 rounded-md border border-ink/15 bg-white px-2 py-1 text-xs focus:border-clay focus:outline-none"
-                          />
+                          <div className="flex items-center gap-1">
+                            <select
+                              value={row.docType}
+                              onChange={(e) =>
+                                updateRow(row.id, { docType: e.target.value as TipoDoc })
+                              }
+                              className="rounded-md border border-ink/15 bg-white px-1 py-1 text-xs focus:border-clay focus:outline-none"
+                            >
+                              <option value="NFe">NF-e</option>
+                              <option value="NFSe">NFS-e</option>
+                            </select>
+                            <input
+                              value={row.nfNumber}
+                              onChange={(e) =>
+                                updateRow(row.id, {
+                                  nfNumber: e.target.value.replace(/\D/g, ""),
+                                })
+                              }
+                              placeholder="000372196"
+                              className="w-24 rounded-md border border-ink/15 bg-white px-2 py-1 text-xs focus:border-clay focus:outline-none"
+                            />
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <input
@@ -271,6 +312,7 @@ export default function Home() {
                             onChange={(e) =>
                               updateRow(row.id, { supplier: e.target.value })
                             }
+                            onBlur={() => memorizarFornecedor(row.cnpj, row.supplier)}
                             placeholder="FORNECEDOR LTDA"
                             className="w-40 rounded-md border border-ink/15 bg-white px-2 py-1 text-xs focus:border-clay focus:outline-none"
                           />

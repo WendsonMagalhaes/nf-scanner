@@ -9,6 +9,7 @@ const nextConfig = {
       "@napi-rs/canvas",
       "tesseract.js",
       "tesseract.js-core",
+      "zxing-wasm",
     ],
     // Garante que o idioma do OCR (português) vá junto em builds/deploys.
     outputFileTracingIncludes: {
@@ -19,6 +20,8 @@ const nextConfig = {
         "./node_modules/tesseract.js/src/**/*",
         "./node_modules/tesseract.js-core/**/*",
         "./node_modules/wasm-feature-detect/**/*",
+        // leitor de código de barras (.wasm lido do disco em runtime)
+        "./node_modules/zxing-wasm/dist/reader/zxing_reader.wasm",
       ],
     },
   },
