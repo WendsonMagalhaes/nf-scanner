@@ -17,6 +17,45 @@ import { nomePorCnpj } from "./fornecedores";
 export type Confianca = "alta" | "baixa";
 export type TipoDoc = "NFe" | "NFSe";
 
+/**
+ * Categoria da nota, pelo que ela representa pro negócio (não é o CFOP em si,
+ * é o agrupamento que aparece no final do nome do arquivo):
+ *  - padrao: compra para revenda (carnes, frios etc.) — é o caso mais comum,
+ *    então não leva sufixo no nome do arquivo.
+ *  - produto: compra de produto que NÃO é de revenda (uso e consumo, ativo etc.)
+ *  - servico: NFS-e — já aparece como "NFS-e" no meio do nome, sem sufixo extra.
+ *  - devolucaoCliente: nota que o CLIENTE emitiu devolvendo mercadoria pra empresa (entrada).
+ *  - devolucaoFornecedor: nota que a EMPRESA emitiu devolvendo mercadoria pro fornecedor (saída).
+ *  - devolucaoVenda: nota que a EMPRESA emitiu devolvendo/estornando uma venda pro próprio cliente (saída).
+ */
+export type Categoria =
+  | "padrao"
+  | "produto"
+  | "servico"
+  | "devolucaoCliente"
+  | "devolucaoFornecedor"
+  | "devolucaoVenda";
+
+/** Rótulos em português pra usar em <select> etc. */
+export const CATEGORIA_LABEL: Record<Categoria, string> = {
+  padrao: "Padrão (compra p/ revenda)",
+  produto: "Produto (não revenda)",
+  servico: "Serviço",
+  devolucaoCliente: "Devolução de cliente",
+  devolucaoFornecedor: "Devolução p/ fornecedor",
+  devolucaoVenda: "Devolução de venda (p/ cliente)",
+};
+
+/** Sufixo que entra no FINAL do nome do arquivo. Vazio = sem sufixo. */
+const SUFIXO_CATEGORIA: Record<Categoria, string> = {
+  padrao: "",
+  produto: "PRODUTO",
+  servico: "",
+  devolucaoCliente: "DEVOLUCAO CLIENTE",
+  devolucaoFornecedor: "DEVOLUCAO FORNECEDOR",
+  devolucaoVenda: "DEVOLUCAO VENDA",
+};
+
 /** Pistas vindas de fora do texto (código de barras, OCR dedicado, aprendizado do usuário). */
 export interface ExtractHints {
   /** chave de 44 dígitos lida do código de barras */
@@ -39,6 +78,8 @@ export interface ExtractedData {
   chaveAcesso: string | null;
   /** "alta" = chave validada + fornecedor confirmado; "baixa" = conferir na tela. */
   confidence: Confianca;
+  /** Categoria da nota (padrão/produto/serviço/devolução...) — ver tipo Categoria. */
+  categoria: Categoria;
   rawTextPreview: string;
 }
 
@@ -535,8 +576,66 @@ function extrairNfse(lines: string[], hints: ExtractHints, text: string): Extrac
     chaveAcesso: null,
     // "alta" = nº e data lidos + fornecedor conhecido pelo CNPJ (dicionário/aprendido)
     confidence: date && nf && cnpj && nomeDic ? "alta" : "baixa",
+    categoria: "servico",
     rawTextPreview: text.slice(0, 400),
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Categoria da nota (padrão / produto / devolução...)                       */
+/* -------------------------------------------------------------------------- */
+
+/** Texto do campo "Natureza da Operação" impresso no DANFE, se achado. */
+function acharNatureza(lines: string[]): string {
+  const L = lines.map(fold);
+  for (let i = 0; i < L.length; i++) {
+    const m = L[i].match(/NATUREZA\s*DA\s*OPERA[CÇ][AÃ]O\s*[:\-]?\s*(.*)/);
+    if (!m) continue;
+    const resto = m[1].trim();
+    if (resto.replace(/[^A-Z]/g, "").length >= 3) return resto;
+    // às vezes o texto vem sozinho na linha seguinte (rótulo e valor quebram no OCR)
+    if (L[i + 1] && !/^(N[ºO]|DATA|CHAVE|PROTOCOLO)/.test(L[i + 1])) return L[i + 1];
+  }
+  return "";
+}
+
+/**
+ * Classifica a nota pelo texto da "Natureza da Operação" + direção (entrada/saída).
+ * Heurística (ajustar as palavras-chave abaixo se um fornecedor específico usar
+ * uma redação diferente no campo):
+ *  - ENTRADA (nota emitida por terceiro):
+ *      "devolução" -> devolução de cliente (o cliente devolveu mercadoria)
+ *      "revenda"/"comercialização" -> padrão (compra p/ revenda)
+ *      outra coisa reconhecida -> produto (compra que não é de revenda)
+ *      nada reconhecido -> padrão (é o caso mais comum, então é o palpite default)
+ *  - SAÍDA (nota emitida pela própria empresa):
+ *      "devolução" + destinatário é um fornecedor já conhecido -> devolução p/ fornecedor
+ *      "devolução" + destinatário não é fornecedor conhecido -> devolução de venda (p/ cliente)
+ *      outra coisa -> padrão
+ */
+function classificarCategoria(
+  lines: string[],
+  saida: boolean,
+  cnpjDestinatarioSaida: string | null,
+  fornecedoresExtras?: Record<string, string>
+): Categoria {
+  const natureza = fold(acharNatureza(lines));
+  const ehDevolucao = /DEVOLU[CÇ][AÃ]O/.test(natureza);
+
+  if (!saida) {
+    if (ehDevolucao) return "devolucaoCliente";
+    if (/REVENDA|COMERCIALIZA[CÇ][AÃ]O/.test(natureza)) return "padrao";
+    if (natureza) return "produto";
+    return "padrao";
+  }
+
+  if (ehDevolucao) {
+    const fornecedorConhecido = cnpjDestinatarioSaida
+      ? !!nomePorCnpj(cnpjDestinatarioSaida, fornecedoresExtras)
+      : false;
+    return fornecedorConhecido ? "devolucaoFornecedor" : "devolucaoVenda";
+  }
+  return "padrao";
 }
 
 /** Nome do destinatário (cliente) — usado quando a nota foi emitida pela sua própria empresa. */
@@ -585,6 +684,12 @@ export function extractFromText(text: string, hints: ExtractHints = {}): Extract
 
   const confidence: Confianca = chave && data.confirmada && nfNumber && supplier && fornecedorOk ? "alta" : "baixa";
 
+  // Na saída, o 1º CNPJ válido do texto que não é o seu costuma ser o destinatário
+  // (aparece perto do topo do DANFE, antes de transportadora etc.) — é uma heurística,
+  // então se um layout específico confundir, dá pra corrigir a categoria na tela.
+  const cnpjDestinatarioSaida = saida ? cnpjsDoTexto(lines)[0] ?? null : null;
+  const categoria = classificarCategoria(lines, saida, cnpjDestinatarioSaida, hints.fornecedoresExtras);
+
   return {
     docType: "NFe",
     direcao: saida ? "saida" : "entrada",
@@ -594,6 +699,7 @@ export function extractFromText(text: string, hints: ExtractHints = {}): Extract
     supplierCnpj: cnpjEmit ? formatCnpj(cnpjEmit) : null,
     chaveAcesso: chave,
     confidence,
+    categoria,
     rawTextPreview: lines.join("\n").slice(0, 400),
   };
 }
@@ -616,10 +722,13 @@ export function buildFilename(
   date: string,
   nfNumber: string,
   supplier: string,
-  tipo: TipoDoc = "NFe"
+  tipo: TipoDoc = "NFe",
+  categoria: Categoria = "padrao"
 ): string {
   const d = sanitizeForFilename(date);
   const n = sanitizeForFilename(nfNumber);
   const s = sanitizeForFilename(supplier).toUpperCase();
-  return `${d} - ${rotuloTipo(tipo)} ${n} - ${s}.pdf`;
+  const sufixo = SUFIXO_CATEGORIA[categoria];
+  const base = `${d} - ${rotuloTipo(tipo)} ${n} - ${s}`;
+  return sufixo ? `${base} - ${sufixo}.pdf` : `${base}.pdf`;
 }

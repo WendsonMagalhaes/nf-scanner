@@ -10,7 +10,13 @@ import {
   AlertTriangle,
   FileWarning,
 } from "lucide-react";
-import { buildFilename, sanitizeForFilename, type TipoDoc } from "@/lib/extract";
+import {
+  buildFilename,
+  sanitizeForFilename,
+  CATEGORIA_LABEL,
+  type TipoDoc,
+  type Categoria,
+} from "@/lib/extract";
 import { FILENAME_PATTERN } from "@/lib/app-info";
 import { adicionarHistorico, lerAprendidos, memorizarFornecedor } from "@/lib/storage";
 
@@ -25,6 +31,8 @@ interface Row {
   supplier: string;
   /** NF-e (produto) ou NFS-e (serviço) */
   docType: TipoDoc;
+  /** padrão / produto / serviço / devolução... — vira sufixo no final do nome do arquivo */
+  categoria: Categoria;
   /** CNPJ do emitente (14 dígitos) — usado para memorizar correções de nome */
   cnpj?: string;
   /** "baixa" = dados extraídos sem confirmação (conferir); vira "alta" quando o usuário edita */
@@ -56,6 +64,7 @@ export default function Home() {
       nfNumber: "",
       supplier: "",
       docType: "NFe" as TipoDoc,
+      categoria: "padrao" as Categoria,
     }));
 
     setRows((prev) => [...prev, ...newRows]);
@@ -85,6 +94,7 @@ export default function Home() {
               nfNumber: data.nfNumber ?? "",
               supplier: data.supplier ?? "",
               docType: (data.docType as TipoDoc) ?? "NFe",
+              categoria: (data.categoria as Categoria) ?? "padrao",
               cnpj: data.supplierCnpj ?? undefined,
               confidence: data.confidence,
             }
@@ -119,7 +129,7 @@ export default function Home() {
 
   function suggestedName(row: Row) {
     if (!row.date || !row.nfNumber || !row.supplier) return null;
-    return buildFilename(row.date, row.nfNumber, row.supplier, row.docType);
+    return buildFilename(row.date, row.nfNumber, row.supplier, row.docType, row.categoria);
   }
 
   const readyCount = rows.filter((r) => r.status === "done" && suggestedName(r)).length;
@@ -248,6 +258,7 @@ export default function Home() {
                     <th className="px-4 py-3 font-medium">Data</th>
                     <th className="px-4 py-3 font-medium">Tipo / Nº</th>
                     <th className="px-4 py-3 font-medium">Fornecedor</th>
+                    <th className="px-4 py-3 font-medium">Categoria</th>
                     <th className="px-4 py-3 font-medium">Status</th>
                     <th className="px-4 py-3"></th>
                   </tr>
@@ -307,6 +318,21 @@ export default function Home() {
                             placeholder="FORNECEDOR LTDA"
                             className="w-40 rounded-md border border-ink/15 bg-white px-2 py-1 text-xs focus:border-clay focus:outline-none"
                           />
+                        </td>
+                        <td className="px-4 py-3">
+                          <select
+                            value={row.categoria}
+                            onChange={(e) =>
+                              updateRow(row.id, { categoria: e.target.value as Categoria })
+                            }
+                            className="w-40 rounded-md border border-ink/15 bg-white px-1 py-1 text-xs focus:border-clay focus:outline-none"
+                          >
+                            {Object.entries(CATEGORIA_LABEL).map(([valor, rotulo]) => (
+                              <option key={valor} value={valor}>
+                                {rotulo}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                         <td className="px-4 py-3">
                           {row.status === "processing" && (
