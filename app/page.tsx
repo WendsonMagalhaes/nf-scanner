@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   FileWarning,
+  Eye,
 } from "lucide-react";
 import {
   buildFilename,
@@ -18,6 +19,7 @@ import {
   type Categoria,
 } from "@/lib/extract";
 import { FILENAME_PATTERN } from "@/lib/app-info";
+import NotaViewer from "@/components/NotaViewer";
 import { adicionarHistorico, lerAprendidos, memorizarFornecedor } from "@/lib/storage";
 
 type Status = "pending" | "processing" | "done" | "error";
@@ -48,6 +50,7 @@ export default function Home() {
   const [rows, setRows] = useState<Row[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [zipping, setZipping] = useState(false);
+  const [viewingId, setViewingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const addFiles = useCallback((fileList: FileList | File[]) => {
@@ -121,10 +124,18 @@ export default function Home() {
 
   function removeRow(id: string) {
     setRows((prev) => prev.filter((r) => r.id !== id));
+    setViewingId((cur) => (cur === id ? null : cur));
   }
 
   function clearAll() {
     setRows([]);
+    setViewingId(null);
+  }
+
+  function navigateViewer(dir: -1 | 1) {
+    const idx = rows.findIndex((r) => r.id === viewingId);
+    const next = rows[idx + dir];
+    if (next) setViewingId(next.id);
   }
 
   function suggestedName(row: Row) {
@@ -132,6 +143,8 @@ export default function Home() {
     return buildFilename(row.date, row.nfNumber, row.supplier, row.docType, row.categoria);
   }
 
+  const viewingIndex = rows.findIndex((r) => r.id === viewingId);
+  const viewingRow = viewingIndex >= 0 ? rows[viewingIndex] : null;
   const readyCount = rows.filter((r) => r.status === "done" && suggestedName(r)).length;
 
   async function downloadZip() {
@@ -183,7 +196,7 @@ export default function Home() {
 
   return (
     <main className="px-4 py-10 sm:px-8 lg:px-16">
-      <div className="mx-auto max-w-5xl">
+      <div className="mx-auto max-w-7xl">
         <div className="mb-8">
           <h1 className="text-xl font-semibold tracking-tight">
             Renomear notas fiscais
@@ -207,8 +220,8 @@ export default function Home() {
           }}
           onClick={() => inputRef.current?.click()}
           className={`group flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-6 py-14 text-center transition-colors ${dragOver
-              ? "border-clay bg-clay/5"
-              : "border-ink/15 bg-white/50 hover:border-clay/50 hover:bg-white"
+            ? "border-clay bg-clay/5"
+            : "border-ink/15 bg-white/50 hover:border-clay/50 hover:bg-white"
             }`}
         >
           <UploadCloud
@@ -250,7 +263,7 @@ export default function Home() {
               </button>
             </div>
 
-            <div className="overflow-hidden rounded-2xl border border-ink/10 bg-white/60">
+            <div className="overflow-x-auto rounded-2xl border border-ink/10 bg-white/60">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-ink/10 bg-sand/60 text-left text-xs uppercase tracking-wide text-ink/50">
@@ -365,12 +378,21 @@ export default function Home() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <button
-                            onClick={() => removeRow(row.id)}
-                            className="text-ink/30 hover:text-red-600"
-                          >
-                            <Trash2 size={15} />
-                          </button>
+                          <div className="flex items-center justify-end gap-3">
+                            <button
+                              onClick={() => setViewingId(row.id)}
+                              className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-ink/15 bg-white px-2 py-1 text-xs text-ink/70 hover:border-clay hover:text-clayDark"
+                              title="Ver a nota e editar os campos lado a lado"
+                            >
+                              <Eye size={14} /> Visualizar
+                            </button>
+                            <button
+                              onClick={() => removeRow(row.id)}
+                              className="text-ink/30 hover:text-red-600"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -417,6 +439,21 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {viewingRow && (
+        <NotaViewer
+          row={viewingRow}
+          finalName={suggestedName(viewingRow)}
+          position={viewingIndex + 1}
+          total={rows.length}
+          onChange={(patch) => updateRow(viewingRow.id, patch)}
+          onSupplierBlur={() =>
+            memorizarFornecedor(viewingRow.cnpj, viewingRow.supplier)
+          }
+          onNavigate={navigateViewer}
+          onClose={() => setViewingId(null)}
+        />
+      )}
     </main>
   );
 }
