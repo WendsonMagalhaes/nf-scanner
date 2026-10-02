@@ -2,14 +2,18 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Download, Search, Trash2, History as HistoryIcon, Copy, Check } from "lucide-react";
+import { Download, Search, Trash2, History as HistoryIcon, Copy, Check, Loader2, AlertTriangle } from "lucide-react";
 import {
   baixarTexto,
-  lerHistorico,
-  salvarHistorico,
+  limparHistorico,
+  listarHistorico,
+  removerHistorico,
   type RegistroHistorico,
 } from "@/lib/storage";
-import { rotuloTipo } from "@/lib/extract";
+import ImportarLocal from "@/components/ImportarLocal";
+
+// Na tela a nota de serviço continua aparecendo como NFS-e (no NOME do arquivo ela é "NF-e ... - SERVIÇOS").
+const rotuloTela = (tipo: RegistroHistorico["tipo"]) => (tipo === "NFSe" ? "NFS-e" : "NF-e");
 
 function formatarQuando(iso: string) {
   const d = new Date(iso);
@@ -19,13 +23,28 @@ function formatarQuando(iso: string) {
 export default function HistoricoPage() {
   const [lista, setLista] = useState<RegistroHistorico[]>([]);
   const [carregado, setCarregado] = useState(false);
+  const [erro, setErro] = useState("");
   const [busca, setBusca] = useState("");
   const [tipo, setTipo] = useState<"todos" | "NFe" | "NFSe">("todos");
   const [copiado, setCopiado] = useState<string | null>(null);
 
-  useEffect(() => {
-    setLista(lerHistorico());
+  async function carregar() {
+    const r = await listarHistorico();
+    if (r.ok) {
+      setLista(r.dados ?? []);
+      setErro("");
+    } else {
+      setErro(
+        r.configurado === false
+          ? "O banco ainda não foi configurado: coloque a DATABASE_URL do Neon no arquivo .env.local e reinicie o app."
+          : `Não consegui carregar o histórico do banco (${r.erro ?? "erro"}).`
+      );
+    }
     setCarregado(true);
+  }
+
+  useEffect(() => {
+    carregar();
   }, []);
 
   const filtrada = useMemo(() => {
@@ -40,23 +59,24 @@ export default function HistoricoPage() {
   const qtdNfe = lista.filter((r) => r.tipo === "NFe").length;
   const qtdNfse = lista.length - qtdNfe;
 
-  function remover(id: string) {
-    const nova = lista.filter((r) => r.id !== id);
-    setLista(nova);
-    salvarHistorico(nova);
+  async function remover(id: string) {
+    const r = await removerHistorico(id);
+    if (r.ok) setLista((prev) => prev.filter((x) => x.id !== id));
+    else setErro(`Não consegui remover (${r.erro ?? "erro"}).`);
   }
 
-  function limpar() {
-    if (!confirm("Apagar todo o histórico deste navegador?")) return;
-    setLista([]);
-    salvarHistorico([]);
+  async function limpar() {
+    if (!confirm("Apagar TODO o histórico do banco? Isso não pode ser desfeito.")) return;
+    const r = await limparHistorico();
+    if (r.ok) setLista([]);
+    else setErro(`Não consegui limpar (${r.erro ?? "erro"}).`);
   }
 
   function exportarCsv() {
     const cab = ["Gerado em", "Tipo", "Data", "Número", "Fornecedor", "Nome final", "Arquivo original"];
     const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
     const linhas = filtrada.map((r) =>
-      [formatarQuando(r.quando), rotuloTipo(r.tipo), r.data, r.numero, r.fornecedor, r.nomeFinal, r.arquivoOriginal]
+      [formatarQuando(r.quando), rotuloTela(r.tipo), r.data, r.numero, r.fornecedor, r.nomeFinal, r.arquivoOriginal]
         .map(esc)
         .join(";")
     );
@@ -81,7 +101,7 @@ export default function HistoricoPage() {
           <div>
             <h1 className="text-xl font-semibold tracking-tight">Histórico</h1>
             <p className="mt-1 text-sm text-ink/60">
-              Notas que já foram baixadas renomeadas neste navegador. Fica só no seu computador.
+              Notas que já foram baixadas renomeadas. Ficam salvas no banco, então valem em qualquer computador.
             </p>
           </div>
           <div className="flex gap-2">
@@ -101,6 +121,20 @@ export default function HistoricoPage() {
             </button>
           </div>
         </div>
+
+        <ImportarLocal onImportado={carregar} />
+
+        {erro && (
+          <p className="mb-4 flex items-start gap-1.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0" /> {erro}
+          </p>
+        )}
+
+        {!carregado && (
+          <p className="mb-4 flex items-center gap-2 text-sm text-ink/50">
+            <Loader2 size={14} className="animate-spin" /> Carregando do banco…
+          </p>
+        )}
 
         {/* Resumo */}
         <div className="mb-4 grid grid-cols-3 gap-3">
@@ -138,7 +172,7 @@ export default function HistoricoPage() {
           </select>
         </div>
 
-        {carregado && lista.length === 0 ? (
+        {carregado && !erro && lista.length === 0 ? (
           <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-ink/15 bg-white/50 px-6 py-16 text-center">
             <HistoryIcon size={32} className="text-ink/30" />
             <p className="font-medium">Nada por aqui ainda</p>
@@ -170,7 +204,7 @@ export default function HistoricoPage() {
                           r.tipo === "NFSe" ? "bg-moss/10 text-moss" : "bg-clay/10 text-clayDark"
                         }`}
                       >
-                        {rotuloTipo(r.tipo)}
+                        {rotuloTela(r.tipo)}
                       </span>
                     </td>
                     <td className="px-4 py-3">

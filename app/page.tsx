@@ -20,13 +20,7 @@ import {
 } from "@/lib/extract";
 import { FILENAME_PATTERN } from "@/lib/app-info";
 import NotaViewer from "@/components/NotaViewer";
-import {
-  adicionarHistorico,
-  lerAprendidos,
-  lerCategoriasAprendidas,
-  memorizarCategoria,
-  memorizarFornecedor,
-} from "@/lib/storage";
+import { adicionarHistorico, memorizarCategoria, memorizarFornecedor } from "@/lib/storage";
 
 type Status = "pending" | "processing" | "done" | "error";
 
@@ -43,6 +37,8 @@ interface Row {
   categoria: Categoria;
   /** CNPJ do emitente (14 dígitos) — usado para memorizar correções de nome e de categoria */
   cnpj?: string;
+  /** chave de acesso de 44 dígitos (só NF-e) — vai para o histórico no banco */
+  chaveAcesso?: string;
   /** entrada = nota de terceiro; saída = nota emitida pela sua empresa */
   direcao?: "entrada" | "saida";
   /** "baixa" = dados extraídos sem confirmação (conferir); vira "alta" quando o usuário edita */
@@ -58,6 +54,7 @@ export default function Home() {
   const [rows, setRows] = useState<Row[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [baixando, setBaixando] = useState(false);
+  const [avisoBanco, setAvisoBanco] = useState("");
   const [viewingId, setViewingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -90,8 +87,6 @@ export default function Home() {
     try {
       const fd = new FormData();
       fd.append("file", row.file);
-      fd.append("fornecedores", JSON.stringify(lerAprendidos()));
-      fd.append("categorias", JSON.stringify(lerCategoriasAprendidas()));
       const res = await fetch("/api/extract", { method: "POST", body: fd });
       if (!res.ok) throw new Error("Falha ao extrair dados do PDF");
       const data = await res.json();
@@ -109,6 +104,7 @@ export default function Home() {
               categoria: (data.categoria as Categoria) ?? "padrao",
               cnpj: data.supplierCnpj ?? undefined,
               direcao: data.direcao,
+              chaveAcesso: data.chaveAcesso ?? undefined,
               confidence: data.confidence,
             }
             : r
@@ -178,6 +174,7 @@ export default function Home() {
     if (ready.length === 0) return;
 
     setBaixando(true);
+    setAvisoBanco("");
     try {
       const usedNames = new Set<string>();
       for (const row of ready) {
@@ -202,17 +199,27 @@ export default function Home() {
         await new Promise((r) => setTimeout(r, 400));
       }
 
-      // registra no Histórico (tela /historico)
-      adicionarHistorico(
+      // registra no Histórico (banco). Se falhar, os arquivos já foram baixados normalmente.
+      const salvo = await adicionarHistorico(
         ready.map((r) => ({
           arquivoOriginal: r.file.name,
           nomeFinal: suggestedName(r)!,
           tipo: r.docType,
+          categoria: r.categoria,
           data: r.date,
           numero: r.nfNumber,
           fornecedor: r.supplier,
+          cnpj: r.cnpj ?? null,
+          chaveAcesso: r.chaveAcesso ?? null,
         }))
       );
+      if (!salvo.ok) {
+        setAvisoBanco(
+          salvo.configurado === false
+            ? "Arquivos baixados, mas o histórico não foi salvo: falta configurar o banco (DATABASE_URL no .env.local)."
+            : `Arquivos baixados, mas não consegui salvar no histórico do banco (${salvo.erro ?? "erro"}).`
+        );
+      }
     } finally {
       setBaixando(false);
     }
@@ -460,6 +467,11 @@ export default function Home() {
               Baixar {readyCount > 0 ? readyCount : ""} arquivo
               {readyCount !== 1 ? "s" : ""} renomeado{readyCount !== 1 ? "s" : ""}
             </button>
+            {avisoBanco && (
+              <p className="mt-3 flex items-start gap-1.5 text-xs text-clayDark">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" /> {avisoBanco}
+              </p>
+            )}
           </div>
         )}
       </div>

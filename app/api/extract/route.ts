@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractFromPdfBuffer } from "@/lib/extract-pdf";
-import type { CategoriaCompra } from "@/lib/fornecedores";
+import { fornecedoresParaExtracao } from "@/lib/repo";
 
 // pdf-parse, pdfjs e tesseract precisam de runtime Node (não funcionam no edge)
 export const runtime = "nodejs";
@@ -16,26 +16,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Nenhum arquivo enviado" }, { status: 400 });
     }
 
-    // nomes que o usuário já corrigiu antes (CNPJ raiz -> nome), guardados no navegador
-    let extras: Record<string, string> | undefined;
+    // Nomes e categorias de fornecedor que você definiu/corrigiu (guardados no banco).
+    // Se o banco estiver fora do ar, a leitura segue só com a lista que já vem no sistema.
+    let nomes: Record<string, string> | undefined;
+    let categorias: Record<string, "padrao" | "produto"> | undefined;
     try {
-      const raw = formData.get("fornecedores");
-      if (typeof raw === "string" && raw) extras = JSON.parse(raw);
-    } catch {
-      extras = undefined;
-    }
-
-    // categorias (padrão x produto) que o usuário já corrigiu antes, por CNPJ raiz
-    let categorias: Record<string, CategoriaCompra> | undefined;
-    try {
-      const raw = formData.get("categorias");
-      if (typeof raw === "string" && raw) categorias = JSON.parse(raw);
-    } catch {
-      categorias = undefined;
+      ({ nomes, categorias } = await fornecedoresParaExtracao());
+    } catch (e) {
+      console.warn("[extract] sem banco, usando só a lista do sistema:", (e as Error).message);
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const result = await extractFromPdfBuffer(buffer, extras, categorias);
+    const result = await extractFromPdfBuffer(buffer, nomes, categorias);
 
     return NextResponse.json({
       originalName: file.name,

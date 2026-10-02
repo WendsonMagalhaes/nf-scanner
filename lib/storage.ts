@@ -1,42 +1,18 @@
 /**
- * Dados guardados no navegador do usuário (localStorage).
- * Só use em componentes "use client". Nada disso vai para o servidor.
+ * Cliente das rotas /api (histórico e fornecedores guardados no banco Neon).
+ * Só use em componentes "use client".
+ *
+ * O localStorage antigo continua sendo LIDO só para a importação única
+ * (componente ImportarLocal) — depois de enviado ao banco, é apagado.
  */
-import type { TipoDoc } from "./extract";
+import type { Categoria, TipoDoc } from "./extract";
 import type { CategoriaCompra } from "./fornecedores";
 
 const LS_FORNECEDORES = "nf-fornecedores";
 const LS_CATEGORIAS = "nf-categorias";
 const LS_HISTORICO = "nf-historico";
-const HISTORICO_MAX = 2000;
 
-function ler<T>(chave: string, padrao: T): T {
-  try {
-    const raw = localStorage.getItem(chave);
-    return raw ? (JSON.parse(raw) as T) : padrao;
-  } catch {
-    return padrao;
-  }
-}
-
-function gravar(chave: string, valor: unknown) {
-  try {
-    localStorage.setItem(chave, JSON.stringify(valor));
-  } catch {
-    /* navegador sem localStorage / cheio: segue sem gravar */
-  }
-}
-
-/* ------------------------------ Fornecedores ------------------------------ */
-
-/** Correções do usuário: CNPJ (8 ou 14 dígitos) -> nome. */
-export function lerAprendidos(): Record<string, string> {
-  return ler<Record<string, string>>(LS_FORNECEDORES, {});
-}
-
-export function salvarAprendidos(mapa: Record<string, string>) {
-  gravar(LS_FORNECEDORES, mapa);
-}
+/* --------------------------------- Utilitários ---------------------------- */
 
 export function normalizarCnpj(valor: string): string {
   const d = valor.replace(/\D/g, "");
@@ -44,59 +20,8 @@ export function normalizarCnpj(valor: string): string {
   return d.length >= 8 ? d.slice(0, 8) : "";
 }
 
-export function memorizarFornecedor(cnpj: string | undefined, nome: string) {
-  const raiz = normalizarCnpj(cnpj ?? "");
-  if (!raiz || !nome.trim()) return;
-  salvarAprendidos({ ...lerAprendidos(), [raiz]: nome.trim().toUpperCase() });
-}
-
 export function formatarRaiz(raiz: string): string {
   return raiz.length === 8 ? raiz.replace(/^(\d{2})(\d{3})(\d{3})$/, "$1.$2.$3/…") : raiz;
-}
-
-/* ------------------------ Categoria (revenda x não) ----------------------- */
-
-/** Categorias que o usuário já corrigiu: CNPJ raiz (8 dígitos) -> "padrao" | "produto". */
-export function lerCategoriasAprendidas(): Record<string, CategoriaCompra> {
-  return ler<Record<string, CategoriaCompra>>(LS_CATEGORIAS, {});
-}
-
-export function memorizarCategoria(cnpj: string | undefined, categoria: CategoriaCompra) {
-  const raiz = normalizarCnpj(cnpj ?? "");
-  if (!raiz) return;
-  gravar(LS_CATEGORIAS, { ...lerCategoriasAprendidas(), [raiz]: categoria });
-}
-
-/* -------------------------------- Histórico ------------------------------- */
-
-export interface RegistroHistorico {
-  id: string;
-  /** ISO 8601 de quando o .zip foi gerado */
-  quando: string;
-  arquivoOriginal: string;
-  nomeFinal: string;
-  tipo: TipoDoc;
-  data: string;
-  numero: string;
-  fornecedor: string;
-}
-
-export function lerHistorico(): RegistroHistorico[] {
-  return ler<RegistroHistorico[]>(LS_HISTORICO, []);
-}
-
-export function adicionarHistorico(novos: Omit<RegistroHistorico, "id" | "quando">[]) {
-  const quando = new Date().toISOString();
-  const registros = novos.map((n) => ({
-    ...n,
-    id: Math.random().toString(36).slice(2, 10),
-    quando,
-  }));
-  gravar(LS_HISTORICO, [...registros, ...lerHistorico()].slice(0, HISTORICO_MAX));
-}
-
-export function salvarHistorico(lista: RegistroHistorico[]) {
-  gravar(LS_HISTORICO, lista);
 }
 
 /** Baixa um arquivo de texto gerado no navegador. */
@@ -110,4 +35,166 @@ export function baixarTexto(nome: string, conteudo: string, mime: string) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+/** Resultado de uma chamada: ok, ou o motivo (e se o problema é falta de configuração). */
+export interface Resultado<T = undefined> {
+  ok: boolean;
+  dados?: T;
+  erro?: string;
+  /** false = DATABASE_URL não foi configurada no servidor */
+  configurado?: boolean;
+}
+
+async function chamar<T>(url: string, init?: RequestInit): Promise<Resultado<T>> {
+  try {
+    const res = await fetch(url, { cache: "no-store", ...init });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, erro: json?.error ?? `Erro ${res.status}`, configurado: json?.configurado };
+    return { ok: true, dados: json as T };
+  } catch {
+    return { ok: false, erro: "Sem conexão com o servidor" };
+  }
+}
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+/* ------------------------------ Fornecedores ------------------------------ */
+
+export interface Fornecedor {
+  /** raiz do CNPJ, 8 dígitos */
+  cnpj: string;
+  nome: string | null;
+  categoria: CategoriaCompra | null;
+}
+
+export async function listarFornecedores() {
+  const r = await chamar<{ itens: Fornecedor[] }>("/api/fornecedores");
+  return { ...r, dados: r.dados?.itens };
+}
+
+/** Só os campos enviados mudam; null limpa o campo. */
+export function salvarFornecedor(item: { cnpj: string; nome?: string | null; categoria?: CategoriaCompra | null }) {
+  return chamar("/api/fornecedores", { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify(item) });
+}
+
+export function salvarFornecedores(itens: { cnpj: string; nome?: string | null; categoria?: CategoriaCompra | null }[]) {
+  return chamar("/api/fornecedores", { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ itens }) });
+}
+
+export function removerFornecedor(cnpj: string) {
+  return chamar(`/api/fornecedores?cnpj=${encodeURIComponent(cnpj)}`, { method: "DELETE" });
+}
+
+/** Chamadas "dispara e esquece" da tela de renomear: não travam o uso se o banco falhar. */
+export function memorizarFornecedor(cnpj: string | undefined, nome: string) {
+  const raiz = normalizarCnpj(cnpj ?? "");
+  if (!raiz || !nome.trim()) return;
+  void salvarFornecedor({ cnpj: raiz, nome });
+}
+
+export function memorizarCategoria(cnpj: string | undefined, categoria: CategoriaCompra) {
+  const raiz = normalizarCnpj(cnpj ?? "");
+  if (!raiz) return;
+  void salvarFornecedor({ cnpj: raiz, categoria });
+}
+
+/* -------------------------------- Histórico ------------------------------- */
+
+export interface RegistroHistorico {
+  id: string;
+  /** ISO 8601 de quando o arquivo foi gerado */
+  quando: string;
+  arquivoOriginal: string;
+  nomeFinal: string;
+  tipo: TipoDoc;
+  categoria?: Categoria | null;
+  data: string;
+  numero: string;
+  fornecedor: string;
+  cnpj?: string | null;
+  chaveAcesso?: string | null;
+}
+
+export type NovoRegistroHistorico = Omit<RegistroHistorico, "id" | "quando"> & { quando?: string };
+
+export async function listarHistorico() {
+  const r = await chamar<{ registros: RegistroHistorico[] }>("/api/historico");
+  return { ...r, dados: r.dados?.registros };
+}
+
+export function adicionarHistorico(registros: NovoRegistroHistorico[]) {
+  return chamar("/api/historico", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ registros }) });
+}
+
+export function removerHistorico(id: string) {
+  return chamar(`/api/historico?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function limparHistorico() {
+  return chamar("/api/historico?todos=1", { method: "DELETE" });
+}
+
+/* ------------------- Dados antigos do navegador (importação) --------------- */
+
+function lerLocal<T>(chave: string, padrao: T): T {
+  try {
+    const raw = localStorage.getItem(chave);
+    return raw ? (JSON.parse(raw) as T) : padrao;
+  } catch {
+    return padrao;
+  }
+}
+
+export interface PendenteLocal {
+  historico: RegistroHistorico[];
+  nomes: Record<string, string>;
+  categorias: Record<string, CategoriaCompra>;
+}
+
+export function lerPendenteLocal(): PendenteLocal {
+  return {
+    historico: lerLocal<RegistroHistorico[]>(LS_HISTORICO, []),
+    nomes: lerLocal<Record<string, string>>(LS_FORNECEDORES, {}),
+    categorias: lerLocal<Record<string, CategoriaCompra>>(LS_CATEGORIAS, {}),
+  };
+}
+
+export function totalPendenteLocal(p: PendenteLocal): number {
+  return p.historico.length + Object.keys(p.nomes).length + Object.keys(p.categorias).length;
+}
+
+/** Envia tudo que estava no navegador para o banco e, só se deu certo, apaga o local. */
+export async function importarLocalParaBanco(p: PendenteLocal = lerPendenteLocal()): Promise<Resultado<{ historico: number; fornecedores: number }>> {
+  // une nomes e categorias por CNPJ
+  const porCnpj = new Map<string, { cnpj: string; nome?: string | null; categoria?: CategoriaCompra | null }>();
+  for (const [k, v] of Object.entries(p.nomes)) {
+    const raiz = normalizarCnpj(k);
+    if (raiz && typeof v === "string" && v.trim()) porCnpj.set(raiz, { cnpj: raiz, nome: v });
+  }
+  for (const [k, v] of Object.entries(p.categorias)) {
+    const raiz = normalizarCnpj(k);
+    if (raiz && (v === "padrao" || v === "produto")) porCnpj.set(raiz, { ...(porCnpj.get(raiz) ?? { cnpj: raiz }), categoria: v });
+  }
+  const fornecedores = [...porCnpj.values()];
+
+  if (fornecedores.length) {
+    const r = await salvarFornecedores(fornecedores);
+    if (!r.ok) return { ok: false, erro: r.erro, configurado: r.configurado };
+  }
+  if (p.historico.length) {
+    // do mais antigo para o mais novo, para o banco guardar na ordem certa
+    const lote = [...p.historico].reverse().map((h) => ({ ...h, id: undefined }) as unknown as NovoRegistroHistorico);
+    const r = await adicionarHistorico(lote);
+    if (!r.ok) return { ok: false, erro: r.erro, configurado: r.configurado };
+  }
+
+  try {
+    localStorage.removeItem(LS_HISTORICO);
+    localStorage.removeItem(LS_FORNECEDORES);
+    localStorage.removeItem(LS_CATEGORIAS);
+  } catch {
+    /* sem localStorage: nada a apagar */
+  }
+  return { ok: true, dados: { historico: p.historico.length, fornecedores: fornecedores.length } };
 }

@@ -12,6 +12,7 @@ Exemplo: `15-09-2026 - NF-e 000161683 - FRIGORIFICO VALENCIO LTDA.pdf`
 
 ```bash
 npm install
+cp .env.example .env.local   # e cole a DATABASE_URL do Neon
 npm run dev
 ```
 
@@ -30,8 +31,28 @@ Abra http://localhost:3000
 3. Os campos aparecem numa tabela **editável**. Linhas com o aviso
    **"conferir dados"** são aquelas em que não deu para confirmar tudo no
    PDF — revise antes de baixar (editar qualquer campo tira o aviso).
-4. "Baixar arquivos renomeados (.zip)" monta o .zip no navegador com os
-   PDFs originais já com o nome final.
+4. "Baixar arquivos renomeados" baixa cada PDF original solto, já com o nome
+   final, e registra o lote no Histórico (banco).
+
+## Banco de dados (Neon)
+
+O histórico de notas e os fornecedores (nomes e categoria revenda/não revenda
+que você corrige na tela) ficam num Postgres hospedado no Neon.
+
+1. No Neon, copie a connection string (Dashboard > Connect).
+2. Coloque em `.env.local` como `DATABASE_URL="postgresql://..."` e reinicie.
+3. As tabelas `nf_fornecedores` e `nf_historico` são criadas sozinhas no
+   primeiro acesso (o mesmo SQL está em `db/schema.sql`, se preferir rodar à mão).
+4. Se ainda houver dados antigos no navegador (histórico e fornecedores),
+   as telas Histórico e Fornecedores mostram um aviso com o botão
+   "Enviar para o banco".
+
+Sem banco configurado, a leitura e a renomeação funcionam normalmente (só com
+a lista de fornecedores do sistema); apenas o histórico e os nomes aprendidos
+não são salvos, e a tela avisa.
+
+`npx tsx test/db.ts` testa a gravação/leitura com um Postgres em memória,
+sem precisar do Neon.
 
 ## Como os dados são extraídos (`lib/extract.ts`)
 
@@ -64,4 +85,4 @@ Se os PDFs de um fornecedor específico sempre errarem, ajuste as funções
 - pdf-parse (texto embutido, servidor)
 - pdfjs-dist + @napi-rs/canvas (renderiza páginas escaneadas, servidor)
 - tesseract.js + @tesseract.js-data/por (OCR em português, servidor)
-- JSZip (montagem do .zip no navegador)
+- @neondatabase/serverless (Postgres no Neon: histórico e fornecedores)
