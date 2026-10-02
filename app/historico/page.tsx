@@ -81,7 +81,7 @@ export default function HistoricoPage() {
           <div>
             <h1 className="text-xl font-semibold tracking-tight">Histórico</h1>
             <p className="mt-1 text-sm text-ink/60">
-              Notas que já saíram em um .zip neste navegador. Fica só no seu computador.
+              Notas que já foram baixadas renomeadas neste navegador. Fica só no seu computador.
             </p>
           </div>
           <div className="flex gap-2">
@@ -143,7 +143,7 @@ export default function HistoricoPage() {
             <HistoryIcon size={32} className="text-ink/30" />
             <p className="font-medium">Nada por aqui ainda</p>
             <p className="max-w-sm text-sm text-ink/50">
-              Quando você baixar um .zip com notas renomeadas, elas aparecem nesta lista.
+              Quando você baixar notas renomeadas, elas aparecem nesta lista.
             </p>
             <Link href="/" className="mt-1 rounded-lg bg-clay px-4 py-2 text-sm font-medium text-paper hover:bg-clayDark">
               Renomear notas

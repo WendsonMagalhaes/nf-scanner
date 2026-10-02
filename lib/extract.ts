@@ -12,7 +12,7 @@
  */
 
 import { MEU_CNPJ, MEUS_NOMES, NOME_NOTA_DE_SAIDA } from "./config";
-import { nomePorCnpj } from "./fornecedores";
+import { nomePorCnpj, categoriaCompraPorCnpj, type CategoriaCompra } from "./fornecedores";
 
 export type Confianca = "alta" | "baixa";
 export type TipoDoc = "NFe" | "NFSe";
@@ -23,7 +23,8 @@ export type TipoDoc = "NFe" | "NFSe";
  *  - padrao: compra para revenda (carnes, frios etc.) — é o caso mais comum,
  *    então não leva sufixo no nome do arquivo.
  *  - produto: compra de produto que NÃO é de revenda (uso e consumo, ativo etc.)
- *  - servico: NFS-e — já aparece como "NFS-e" no meio do nome, sem sufixo extra.
+ *  - servico: nota de serviço (NFS-e) — sai como "NF-e" no nome, igual às demais,
+ *    e leva o sufixo "SERVIÇOS" no final.
  *  - devolucaoCliente: nota que o CLIENTE emitiu devolvendo mercadoria pra empresa (entrada).
  *  - devolucaoFornecedor: nota que a EMPRESA emitiu devolvendo mercadoria pro fornecedor (saída).
  *  - devolucaoVenda: nota que a EMPRESA emitiu devolvendo/estornando uma venda pro próprio cliente (saída).
@@ -50,7 +51,7 @@ export const CATEGORIA_LABEL: Record<Categoria, string> = {
 const SUFIXO_CATEGORIA: Record<Categoria, string> = {
   padrao: "",
   produto: "PRODUTO",
-  servico: "",
+  servico: "SERVIÇOS",
   devolucaoCliente: "DEVOLUCAO CLIENTE",
   devolucaoFornecedor: "DEVOLUCAO FORNECEDOR",
   devolucaoVenda: "DEVOLUCAO VENDA",
@@ -64,6 +65,8 @@ export interface ExtractHints {
   nfseNumero?: string | null;
   /** CNPJ(raiz) -> nome aprendido/corrigido pelo usuário */
   fornecedoresExtras?: Record<string, string>;
+  /** CNPJ(raiz) -> "padrao" | "produto" aprendido quando o usuário corrige a categoria na tela */
+  categoriasExtras?: Record<string, CategoriaCompra>;
 }
 
 export interface ExtractedData {
@@ -600,38 +603,52 @@ function acharNatureza(lines: string[]): string {
 }
 
 /**
- * Classifica a nota pelo texto da "Natureza da Operação" + direção (entrada/saída).
- * Heurística (ajustar as palavras-chave abaixo se um fornecedor específico usar
- * uma redação diferente no campo):
- *  - ENTRADA (nota emitida por terceiro):
- *      "devolução" -> devolução de cliente (o cliente devolveu mercadoria)
- *      "revenda"/"comercialização" -> padrão (compra p/ revenda)
- *      outra coisa reconhecida -> produto (compra que não é de revenda)
- *      nada reconhecido -> padrão (é o caso mais comum, então é o palpite default)
- *  - SAÍDA (nota emitida pela própria empresa):
- *      "devolução" + destinatário é um fornecedor já conhecido -> devolução p/ fornecedor
- *      "devolução" + destinatário não é fornecedor conhecido -> devolução de venda (p/ cliente)
- *      outra coisa -> padrão
+ * Palavras da "Natureza da Operação" que indicam, COM CERTEZA, compra que NÃO é de revenda.
+ * Natureza comum de revenda ("VENDA DE MERCADORIA", "VENDA DE PRODUCAO DO ESTABELECIMENTO",
+ * "VENDA MERC. ADQ. TERCEIROS" etc.) NÃO entra aqui — ela fica como padrão.
+ */
+const NATUREZA_NAO_REVENDA =
+  /USO\s*(E|\/|-)?\s*CONSUMO|\bCONSUMO\b|IMOBILIZ|\bATIVO\b|MATERIAL\s+DE\s+(LIMPEZA|ESCRITORIO|EXPEDIENTE|EMBALAGEM)|MANUTENC|CONSERTO|\bPECAS?\b/;
+
+/**
+ * Classifica a nota. Regra de ouro: o palpite é SEMPRE "padrão" (compra p/ revenda);
+ * "produto" só aparece quando há evidência de que NÃO é revenda. (Antes era o contrário:
+ * qualquer natureza sem a palavra "revenda" virava "produto", e "VENDA DE MERCADORIA"
+ * — o texto normal das notas de frigoríficos — caía em "produto" por engano.)
+ *
+ * ENTRADA (nota emitida por terceiro), em ordem de prioridade:
+ *  1. "devolução" na natureza -> devolução de cliente
+ *  2. categoria que o USUÁRIO já corrigiu para esse CNPJ (aprendida no navegador)
+ *  3. lista de fornecedores em lib/fornecedores.ts (revenda x não revenda)
+ *  4. natureza com palavra de não-revenda (uso e consumo, ativo, peças...) -> produto
+ *  5. qualquer outra coisa -> padrão
+ *
+ * SAÍDA (nota emitida pela própria empresa):
+ *  "devolução" + destinatário é fornecedor conhecido -> devolução p/ fornecedor
+ *  "devolução" + destinatário não é fornecedor conhecido -> devolução de venda (p/ cliente)
+ *  outra coisa -> padrão
  */
 function classificarCategoria(
   lines: string[],
   saida: boolean,
   cnpjDestinatarioSaida: string | null,
-  fornecedoresExtras?: Record<string, string>
+  cnpjEmitente: string | null,
+  hints: ExtractHints
 ): Categoria {
   const natureza = fold(acharNatureza(lines));
   const ehDevolucao = /DEVOLU[CÇ][AÃ]O/.test(natureza);
 
   if (!saida) {
     if (ehDevolucao) return "devolucaoCliente";
-    if (/REVENDA|COMERCIALIZA[CÇ][AÃ]O/.test(natureza)) return "padrao";
-    if (natureza) return "produto";
+    const conhecida = categoriaCompraPorCnpj(cnpjEmitente, hints.categoriasExtras);
+    if (conhecida) return conhecida;
+    if (NATUREZA_NAO_REVENDA.test(natureza)) return "produto";
     return "padrao";
   }
 
   if (ehDevolucao) {
     const fornecedorConhecido = cnpjDestinatarioSaida
-      ? !!nomePorCnpj(cnpjDestinatarioSaida, fornecedoresExtras)
+      ? !!nomePorCnpj(cnpjDestinatarioSaida, hints.fornecedoresExtras)
       : false;
     return fornecedorConhecido ? "devolucaoFornecedor" : "devolucaoVenda";
   }
@@ -688,7 +705,7 @@ export function extractFromText(text: string, hints: ExtractHints = {}): Extract
   // (aparece perto do topo do DANFE, antes de transportadora etc.) — é uma heurística,
   // então se um layout específico confundir, dá pra corrigir a categoria na tela.
   const cnpjDestinatarioSaida = saida ? cnpjsDoTexto(lines)[0] ?? null : null;
-  const categoria = classificarCategoria(lines, saida, cnpjDestinatarioSaida, hints.fornecedoresExtras);
+  const categoria = classificarCategoria(lines, saida, cnpjDestinatarioSaida, cnpjEmit, hints);
 
   return {
     docType: "NFe",
@@ -714,8 +731,9 @@ export function sanitizeForFilename(s: string): string {
     .trim();
 }
 
-export function rotuloTipo(tipo: TipoDoc): string {
-  return tipo === "NFSe" ? "NFS-e" : "NF-e";
+/** No nome do arquivo toda nota é "NF-e"; a de serviço se distingue pelo sufixo SERVIÇOS. */
+export function rotuloTipo(_tipo: TipoDoc): string {
+  return "NF-e";
 }
 
 export function buildFilename(
@@ -728,7 +746,8 @@ export function buildFilename(
   const d = sanitizeForFilename(date);
   const n = sanitizeForFilename(nfNumber);
   const s = sanitizeForFilename(supplier).toUpperCase();
-  const sufixo = SUFIXO_CATEGORIA[categoria];
+  // nota de serviço sempre leva SERVIÇOS, mesmo se a categoria não foi ajustada na tela
+  const sufixo = SUFIXO_CATEGORIA[tipo === "NFSe" ? "servico" : categoria];
   const base = `${d} - ${rotuloTipo(tipo)} ${n} - ${s}`;
   return sufixo ? `${base} - ${sufixo}.pdf` : `${base}.pdf`;
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractFromPdfBuffer } from "@/lib/extract-pdf";
+import type { CategoriaCompra } from "@/lib/fornecedores";
 
 // pdf-parse, pdfjs e tesseract precisam de runtime Node (não funcionam no edge)
 export const runtime = "nodejs";
@@ -24,8 +25,17 @@ export async function POST(req: NextRequest) {
       extras = undefined;
     }
 
+    // categorias (padrão x produto) que o usuário já corrigiu antes, por CNPJ raiz
+    let categorias: Record<string, CategoriaCompra> | undefined;
+    try {
+      const raw = formData.get("categorias");
+      if (typeof raw === "string" && raw) categorias = JSON.parse(raw);
+    } catch {
+      categorias = undefined;
+    }
+
     const buffer = Buffer.from(await file.arrayBuffer());
-    const result = await extractFromPdfBuffer(buffer, extras);
+    const result = await extractFromPdfBuffer(buffer, extras, categorias);
 
     return NextResponse.json({
       originalName: file.name,

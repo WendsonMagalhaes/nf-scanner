@@ -20,7 +20,13 @@ import {
 } from "@/lib/extract";
 import { FILENAME_PATTERN } from "@/lib/app-info";
 import NotaViewer from "@/components/NotaViewer";
-import { adicionarHistorico, lerAprendidos, memorizarFornecedor } from "@/lib/storage";
+import {
+  adicionarHistorico,
+  lerAprendidos,
+  lerCategoriasAprendidas,
+  memorizarCategoria,
+  memorizarFornecedor,
+} from "@/lib/storage";
 
 type Status = "pending" | "processing" | "done" | "error";
 
@@ -35,8 +41,10 @@ interface Row {
   docType: TipoDoc;
   /** padrão / produto / serviço / devolução... — vira sufixo no final do nome do arquivo */
   categoria: Categoria;
-  /** CNPJ do emitente (14 dígitos) — usado para memorizar correções de nome */
+  /** CNPJ do emitente (14 dígitos) — usado para memorizar correções de nome e de categoria */
   cnpj?: string;
+  /** entrada = nota de terceiro; saída = nota emitida pela sua empresa */
+  direcao?: "entrada" | "saida";
   /** "baixa" = dados extraídos sem confirmação (conferir); vira "alta" quando o usuário edita */
   confidence?: "alta" | "baixa";
   error?: string;
@@ -49,7 +57,7 @@ function newId() {
 export default function Home() {
   const [rows, setRows] = useState<Row[]>([]);
   const [dragOver, setDragOver] = useState(false);
-  const [zipping, setZipping] = useState(false);
+  const [baixando, setBaixando] = useState(false);
   const [viewingId, setViewingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -83,6 +91,7 @@ export default function Home() {
       const fd = new FormData();
       fd.append("file", row.file);
       fd.append("fornecedores", JSON.stringify(lerAprendidos()));
+      fd.append("categorias", JSON.stringify(lerCategoriasAprendidas()));
       const res = await fetch("/api/extract", { method: "POST", body: fd });
       if (!res.ok) throw new Error("Falha ao extrair dados do PDF");
       const data = await res.json();
@@ -99,6 +108,7 @@ export default function Home() {
               docType: (data.docType as TipoDoc) ?? "NFe",
               categoria: (data.categoria as Categoria) ?? "padrao",
               cnpj: data.supplierCnpj ?? undefined,
+              direcao: data.direcao,
               confidence: data.confidence,
             }
             : r
@@ -116,9 +126,24 @@ export default function Home() {
   }
 
   function updateRow(id: string, patch: Partial<Row>) {
+    const atual = rows.find((r) => r.id === id);
+    const extra: Partial<Row> = {};
+
+    // trocar o tipo já acerta a categoria: NFS-e => Serviço; voltar p/ NF-e tira o "Serviço"
+    if (atual && patch.docType && patch.docType !== atual.docType) {
+      if (patch.docType === "NFSe") extra.categoria = "servico";
+      else if (atual.categoria === "servico") extra.categoria = "padrao";
+    }
+
+    // o usuário corrigiu revenda x não revenda: lembra para esse fornecedor nas próximas notas
+    const cat = patch.categoria;
+    if (atual && (cat === "padrao" || cat === "produto") && atual.direcao !== "saida" && atual.docType === "NFe") {
+      memorizarCategoria(atual.cnpj, cat);
+    }
+
     // ao editar um campo, o usuário está conferindo os dados
     setRows((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, ...patch, confidence: "alta" } : r))
+      prev.map((r) => (r.id === id ? { ...r, ...patch, ...extra, confidence: "alta" } : r))
     );
   }
 
@@ -147,15 +172,13 @@ export default function Home() {
   const viewingRow = viewingIndex >= 0 ? rows[viewingIndex] : null;
   const readyCount = rows.filter((r) => r.status === "done" && suggestedName(r)).length;
 
-  async function downloadZip() {
+  /** Baixa cada PDF como arquivo solto, já com o nome final (sem .zip). */
+  async function baixarArquivos() {
     const ready = rows.filter((r) => r.status === "done" && suggestedName(r));
     if (ready.length === 0) return;
 
-    setZipping(true);
+    setBaixando(true);
     try {
-      const JSZip = (await import("jszip")).default;
-      const zip = new JSZip();
-
       const usedNames = new Set<string>();
       for (const row of ready) {
         let name = suggestedName(row)!;
@@ -166,10 +189,19 @@ export default function Home() {
           name = `${base} (${i}).pdf`;
         }
         usedNames.add(name);
-        zip.file(name, row.file);
+
+        const url = URL.createObjectURL(new Blob([row.file], { type: "application/pdf" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+        // pequena pausa entre os downloads para o navegador não descartar nenhum
+        await new Promise((r) => setTimeout(r, 400));
       }
 
-      const blob = await zip.generateAsync({ type: "blob" });
       // registra no Histórico (tela /historico)
       adicionarHistorico(
         ready.map((r) => ({
@@ -181,16 +213,8 @@ export default function Home() {
           fornecedor: r.supplier,
         }))
       );
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "notas-fiscais-renomeadas.zip";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
     } finally {
-      setZipping(false);
+      setBaixando(false);
     }
   }
 
@@ -424,17 +448,17 @@ export default function Home() {
             )}
 
             <button
-              onClick={downloadZip}
-              disabled={readyCount === 0 || zipping}
+              onClick={baixarArquivos}
+              disabled={readyCount === 0 || baixando}
               className="mt-5 flex items-center gap-2 rounded-xl bg-clay px-5 py-3 text-sm font-medium text-paper shadow-sm transition-colors hover:bg-clayDark disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {zipping ? (
+              {baixando ? (
                 <Loader2 size={16} className="animate-spin" />
               ) : (
                 <Download size={16} />
               )}
               Baixar {readyCount > 0 ? readyCount : ""} arquivo
-              {readyCount !== 1 ? "s" : ""} renomeado{readyCount !== 1 ? "s" : ""} (.zip)
+              {readyCount !== 1 ? "s" : ""} renomeado{readyCount !== 1 ? "s" : ""}
             </button>
           </div>
         )}

@@ -7,6 +7,7 @@
 import { extractFromText, type ExtractedData, type ExtractHints } from "./extract";
 import { openPdfPages, ocrImage, type PdfPages, type Rotacao } from "./ocr";
 import { lerChaveDoBarcode } from "./barcode";
+import type { CategoriaCompra } from "./fornecedores";
 
 export type Metodo = "texto" | "ocr";
 
@@ -86,18 +87,19 @@ async function lerTextoNativo(buffer: Buffer): Promise<string> {
 
 export async function extractFromPdfBuffer(
   buffer: Buffer,
-  fornecedoresExtras?: Record<string, string>
+  fornecedoresExtras?: Record<string, string>,
+  categoriasExtras?: Record<string, CategoriaCompra>
 ): Promise<ExtractResult> {
   // 1) texto embutido
   const textoNativo = await lerTextoNativo(buffer);
-  const doTexto = extractFromText(textoNativo, { fornecedoresExtras });
+  const doTexto = extractFromText(textoNativo, { fornecedoresExtras, categoriasExtras });
   if (doTexto.confidence === "alta") return { ...doTexto, method: "texto" };
 
   // 2) código de barras + OCR
   const pages = await openPdfPages(buffer);
   try {
     const ultimaPagina = Math.min(pages.numPages, MAX_PAGINAS);
-    const hints: ExtractHints = { fornecedoresExtras };
+    const hints: ExtractHints = { fornecedoresExtras, categoriasExtras };
 
     // 2a) chave pelo código de barras (rápido, à prova de erro de OCR, e diz se a página está girada)
     const bc = await lerChaveDoBarcode(pages, 1);

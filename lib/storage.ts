@@ -3,8 +3,10 @@
  * Só use em componentes "use client". Nada disso vai para o servidor.
  */
 import type { TipoDoc } from "./extract";
+import type { CategoriaCompra } from "./fornecedores";
 
 const LS_FORNECEDORES = "nf-fornecedores";
+const LS_CATEGORIAS = "nf-categorias";
 const LS_HISTORICO = "nf-historico";
 const HISTORICO_MAX = 2000;
 
@@ -50,6 +52,19 @@ export function memorizarFornecedor(cnpj: string | undefined, nome: string) {
 
 export function formatarRaiz(raiz: string): string {
   return raiz.length === 8 ? raiz.replace(/^(\d{2})(\d{3})(\d{3})$/, "$1.$2.$3/…") : raiz;
+}
+
+/* ------------------------ Categoria (revenda x não) ----------------------- */
+
+/** Categorias que o usuário já corrigiu: CNPJ raiz (8 dígitos) -> "padrao" | "produto". */
+export function lerCategoriasAprendidas(): Record<string, CategoriaCompra> {
+  return ler<Record<string, CategoriaCompra>>(LS_CATEGORIAS, {});
+}
+
+export function memorizarCategoria(cnpj: string | undefined, categoria: CategoriaCompra) {
+  const raiz = normalizarCnpj(cnpj ?? "");
+  if (!raiz) return;
+  gravar(LS_CATEGORIAS, { ...lerCategoriasAprendidas(), [raiz]: categoria });
 }
 
 /* -------------------------------- Histórico ------------------------------- */

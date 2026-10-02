@@ -4,7 +4,7 @@ import { CheckCircle2, AlertTriangle, FileText, Wrench } from "lucide-react";
 const PASSOS = [
   { t: "Envie os PDFs", d: "Arraste vários de uma vez. Pode misturar NF-e, NFS-e, notas giradas e PDFs com boletos junto." },
   { t: "Confira a tabela", d: "Cada linha vem preenchida. Linhas com “conferir dados” pedem uma olhada antes de baixar." },
-  { t: "Baixe o .zip", d: "Os PDFs originais saem já com o nome final. O lote fica registrado no Histórico." },
+  { t: "Baixe os arquivos", d: "Cada PDF original é baixado solto, já com o nome final (o navegador pode pedir permissão para baixar vários arquivos). O lote fica registrado no Histórico." },
 ];
 
 const TIPOS = [
@@ -17,7 +17,7 @@ const TIPOS = [
   {
     icone: Wrench,
     titulo: "NFS-e (serviço)",
-    padrao: "DD-MM-AAAA - NFS-e NNNNNNN - PRESTADOR.pdf",
+    padrao: "DD-MM-AAAA - NF-e NNNNNNN - PRESTADOR - SERVIÇOS.pdf",
     texto: "Nota de serviço da prefeitura. O número vem do quadro “Nota:” e o nome, do bloco do prestador.",
   },
 ];
