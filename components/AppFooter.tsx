@@ -34,7 +34,7 @@ export default function AppFooter() {
             </div>
 
             <div className="border-t border-ink/10 px-4 sm:px-8 lg:px-16">
-                <div className="mx-auto flex max-w-5xl flex-col gap-1 py-3 text-[11px] text-ink/40 sm:flex-row sm:items-center sm:justify-between">
+                <div className="mx-auto flex max-w-5xl flex-col gap-1 py-3 text-[0.6875rem] text-ink/40 sm:flex-row sm:items-center sm:justify-between">
                     <span>
                         © {year} {APP_NAME}. Todos os direitos reservados.
                     </span>

@@ -315,7 +315,7 @@ export default function Home() {
                         key={row.id}
                         className="border-b border-ink/5 last:border-0 hover:bg-sand/30"
                       >
-                        <td className="max-w-[180px] truncate px-4 py-3 text-ink/70">
+                        <td className="max-w-[11.25rem] truncate px-4 py-3 text-ink/70">
                           {row.file.name}
                         </td>
                         <td className="px-4 py-3">

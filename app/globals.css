@@ -2,9 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Escala proporcional para notebooks (1366x768 ~ 1920x1080 a 100%).
+   1920 / 120 = 16px, então rem escala junto com a largura.
+   Mínimo de 12px para o texto não ficar ilegível abaixo de ~1440px. */
+@media (min-width: 1280px) and (max-width: 1919px) {
+  html {
+    font-size: max(12px, calc(100vw / 120));
+  }
+}
+
 body {
   background-image: radial-gradient(circle at 1px 1px, #e4dcc9 1px, transparent 0);
-  background-size: 24px 24px;
+  background-size: 1.5rem 1.5rem;
 }
 
 ::selection {

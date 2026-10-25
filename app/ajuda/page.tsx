@@ -48,7 +48,7 @@ export default function AjudaPage() {
               <p className="flex items-center gap-2 text-sm font-semibold">
                 <Icone size={16} className="text-clay" /> {titulo}
               </p>
-              <p className="mt-2 break-words rounded-md bg-sand/60 px-2 py-1.5 font-mono text-[11px] text-ink/70">{padrao}</p>
+              <p className="mt-2 break-words rounded-md bg-sand/60 px-2 py-1.5 font-mono text-[0.6875rem] text-ink/70">{padrao}</p>
               <p className="mt-2 text-xs text-ink/60">{texto}</p>
             </div>
           ))}

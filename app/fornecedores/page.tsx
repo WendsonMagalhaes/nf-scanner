@@ -181,7 +181,7 @@ export default function FornecedoresPage() {
               onChange={(e) => setNome(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && adicionar()}
               placeholder="Nome no arquivo (ex.: FRIGORIFICO VALENCIO LTDA)"
-              className="min-w-[220px] flex-1 rounded-lg border border-ink/15 bg-white px-3 py-2 text-sm focus:border-clay focus:outline-none"
+              className="min-w-[13.75rem] flex-1 rounded-lg border border-ink/15 bg-white px-3 py-2 text-sm focus:border-clay focus:outline-none"
             />
             <button
               onClick={adicionar}
@@ -191,14 +191,14 @@ export default function FornecedoresPage() {
             </button>
           </div>
           {erro && <p className="mt-2 text-xs text-red-600">{erro}</p>}
-          <p className="mt-2 text-[11px] text-ink/40">
+          <p className="mt-2 text-[0.6875rem] text-ink/40">
             Vale para todas as filiais (usa os 8 primeiros dígitos do CNPJ).
           </p>
         </div>
 
         {/* Busca + backup */}
         <div className="my-4 flex flex-wrap items-center gap-2">
-          <div className="relative min-w-[220px] flex-1">
+          <div className="relative min-w-[13.75rem] flex-1">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink/40" />
             <input
               value={busca}
@@ -310,7 +310,7 @@ export default function FornecedoresPage() {
                       return c ? ROTULO_CATEGORIA[c] : "";
                     })()}
                   </td>
-                  <td className="whitespace-nowrap px-4 py-2.5 text-right text-[11px] text-moss">
+                  <td className="whitespace-nowrap px-4 py-2.5 text-right text-[0.6875rem] text-moss">
                     {meus[raiz]?.nome || meus[raiz]?.categoria ? "ajustado por você" : ""}
                   </td>
                 </tr>
@@ -318,7 +318,7 @@ export default function FornecedoresPage() {
             </tbody>
           </table>
         </div>
-        <p className="mt-2 text-[11px] text-ink/40">
+        <p className="mt-2 text-[0.6875rem] text-ink/40">
           Sua lista fica salva no banco e vale em qualquer computador. O que você ajusta aqui tem prioridade sobre a
           lista que já vem no sistema (<span className="font-mono">lib/fornecedores.ts</span>).
         </p>

@@ -28,7 +28,7 @@ export default function AppHeader() {
                             <span className="block text-sm font-semibold tracking-tight">
                                 {APP_NAME}
                             </span>
-                            <span className="block text-[11px] text-paper/70">{APP_SUBTITLE}</span>
+                            <span className="block text-[0.6875rem] text-paper/70">{APP_SUBTITLE}</span>
                         </span>
                     </Link>
 
@@ -51,7 +51,7 @@ export default function AppHeader() {
                                 </Link>
                             );
                         })}
-                        <span className="ml-2 hidden rounded-md bg-black/15 px-2 py-1 font-mono text-[11px] text-paper/80 sm:inline">
+                        <span className="ml-2 hidden rounded-md bg-black/15 px-2 py-1 font-mono text-[0.6875rem] text-paper/80 sm:inline">
                             v{APP_VERSION}
                         </span>
                     </nav>

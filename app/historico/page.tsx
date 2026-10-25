@@ -144,7 +144,7 @@ export default function HistoricoPage() {
             { rotulo: "NFS-e (serviços)", valor: qtdNfse },
           ].map((c) => (
             <div key={c.rotulo} className="rounded-xl border border-ink/10 bg-white/60 px-4 py-3">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-ink/40">{c.rotulo}</p>
+              <p className="text-[0.6875rem] font-medium uppercase tracking-wide text-ink/40">{c.rotulo}</p>
               <p className="mt-1 text-2xl font-semibold text-clayDark">{c.valor}</p>
             </div>
           ))}
@@ -152,7 +152,7 @@ export default function HistoricoPage() {
 
         {/* Filtros */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <div className="relative min-w-[220px] flex-1">
+          <div className="relative min-w-[13.75rem] flex-1">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink/40" />
             <input
               value={busca}
@@ -200,7 +200,7 @@ export default function HistoricoPage() {
                     <td className="whitespace-nowrap px-4 py-3 text-xs text-ink/60">{formatarQuando(r.quando)}</td>
                     <td className="px-4 py-3">
                       <span
-                        className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${
+                        className={`rounded-md px-2 py-0.5 text-[0.6875rem] font-medium ${
                           r.tipo === "NFSe" ? "bg-moss/10 text-moss" : "bg-clay/10 text-clayDark"
                         }`}
                       >
@@ -209,7 +209,7 @@ export default function HistoricoPage() {
                     </td>
                     <td className="px-4 py-3">
                       <p className="break-all font-mono text-xs">{r.nomeFinal}</p>
-                      <p className="mt-0.5 text-[11px] text-ink/40">original: {r.arquivoOriginal}</p>
+                      <p className="mt-0.5 text-[0.6875rem] text-ink/40">original: {r.arquivoOriginal}</p>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right">
                       <button onClick={() => copiar(r)} title="Copiar nome" className="mr-2 text-ink/30 hover:text-clay">
