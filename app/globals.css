@@ -16,7 +16,23 @@ body {
   background-size: 1.5rem 1.5rem;
 }
 
+/* Contorno branco fino da logo (sem caixa), para qualquer fundo */
+.logo-contorno {
+  --contorno: #fff;
+  filter:
+    drop-shadow(0 0 0.5px var(--contorno))
+    drop-shadow(1px 0 0 var(--contorno))
+    drop-shadow(-1px 0 0 var(--contorno))
+    drop-shadow(0 1px 0 var(--contorno))
+    drop-shadow(0 -1px 0 var(--contorno));
+}
+
+/* Variação pastel (laranja claro) para fundos laranja, como o cabeçalho */
+.logo-contorno-claro {
+  --contorno: #fcd9bf;
+}
+
 ::selection {
-  background: #c26a3f;
+  background: #f58a1f;
   color: #faf7f2;
 }

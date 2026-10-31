@@ -12,7 +12,8 @@ const config: Config = {
         paper: "#faf7f2",
         clay: "#c26a3f",
         clayDark: "#a8542d",
-        moss: "#3f6e52",
+        moss: "#14472f",
+        verde: "#0d3322",
         sand: "#ece5d8",
       },
       fontFamily: {

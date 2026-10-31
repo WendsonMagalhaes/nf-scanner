@@ -1,24 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { BancoIndisponivel } from "@/lib/db";
+import { falhaApi, semSessao, uidAtivo } from "@/lib/sessao";
 import { listarFornecedores, removerFornecedor, salvarFornecedor } from "@/lib/repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function falha(e: unknown) {
-  if (e instanceof BancoIndisponivel) {
-    console.error("[fornecedores]", e.message);
-    return NextResponse.json({ error: e.message, configurado: e.configurado }, { status: 503 });
-  }
-  console.error(e);
-  return NextResponse.json({ error: "Erro inesperado" }, { status: 500 });
-}
-
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const uid = await uidAtivo(req);
+  if (!uid) return semSessao();
   try {
-    return NextResponse.json({ itens: await listarFornecedores() });
+    return NextResponse.json({ itens: await listarFornecedores(uid) });
   } catch (e) {
-    return falha(e);
+    return falhaApi(e, "fornecedores");
   }
 }
 
@@ -28,6 +21,8 @@ export async function GET() {
  * Só os campos enviados são alterados; null limpa o campo.
  */
 export async function PUT(req: NextRequest) {
+  const uid = await uidAtivo(req);
+  if (!uid) return semSessao();
   try {
     const body = await req.json();
     const itens: any[] = Array.isArray(body?.itens) ? body.itens : [body];
@@ -36,20 +31,22 @@ export async function PUT(req: NextRequest) {
       const dados: { nome?: string | null; categoria?: "padrao" | "produto" | null } = {};
       if (it && "nome" in it) dados.nome = typeof it.nome === "string" ? it.nome : null;
       if (it && "categoria" in it) dados.categoria = it.categoria === "padrao" || it.categoria === "produto" ? it.categoria : null;
-      if (await salvarFornecedor(it?.cnpj, dados)) salvos++;
+      if (await salvarFornecedor(uid, it?.cnpj, dados)) salvos++;
     }
     return NextResponse.json({ salvos });
   } catch (e) {
-    return falha(e);
+    return falhaApi(e, "fornecedores");
   }
 }
 
 /** ?cnpj=08915713 */
 export async function DELETE(req: NextRequest) {
+  const uid = await uidAtivo(req);
+  if (!uid) return semSessao();
   try {
-    await removerFornecedor(new URL(req.url).searchParams.get("cnpj"));
+    await removerFornecedor(uid, new URL(req.url).searchParams.get("cnpj"));
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return falha(e);
+    return falhaApi(e, "fornecedores");
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   UploadCloud,
   Loader2,
@@ -10,6 +10,10 @@ import {
   AlertTriangle,
   FileWarning,
   Eye,
+  Archive,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";
 import {
   buildFilename,
@@ -20,9 +24,43 @@ import {
 } from "@/lib/extract";
 import { FILENAME_PATTERN } from "@/lib/app-info";
 import NotaViewer from "@/components/NotaViewer";
-import { adicionarHistorico, memorizarCategoria, memorizarFornecedor } from "@/lib/storage";
+import {
+  adicionarHistorico,
+  memorizarCategoria,
+  memorizarFornecedor,
+  registrarCorrecoes,
+  resumoAprendizado,
+  type CorrecaoRegistro,
+} from "@/lib/storage";
+import { baixarBlob, gerarZip, nomesUnicos } from "@/lib/download";
+import { mostrarErro } from "@/lib/notificar";
+import { toast } from "sonner";
 
 type Status = "pending" | "processing" | "done" | "error";
+
+/** Nome da pasta de cada categoria dentro do .zip (curto, sem "/"). */
+const PASTA_CATEGORIA: Record<Categoria, string> = {
+  padrao: "Padrão",
+  produto: "Produto",
+  servico: "Serviço",
+  devolucaoCliente: "Devolução de cliente",
+  devolucaoFornecedor: "Devolução a fornecedor",
+  devolucaoVenda: "Devolução de venda",
+};
+
+/** Ordem de saída: Padrão primeiro, depois as demais na ordem do sistema. */
+const ORDEM_CATEGORIA = Object.keys(CATEGORIA_LABEL) as Categoria[];
+
+type CampoOrdem = "arquivo" | "data" | "tipo" | "fornecedor" | "categoria" | "status";
+
+/** Valores como vieram do PDF (antes de qualquer correção na tela). */
+interface Snapshot {
+  date: string;
+  nfNumber: string;
+  supplier: string;
+  docType: TipoDoc;
+  categoria: Categoria;
+}
 
 interface Row {
   id: string;
@@ -44,7 +82,42 @@ interface Row {
   /** "baixa" = dados extraídos sem confirmação (conferir); vira "alta" quando o usuário edita */
   confidence?: "alta" | "baixa";
   error?: string;
+  /** como foi extraído; comparado com a tela para aprender com as correções */
+  original?: Snapshot;
+  /** a nota já foi renomeada antes (pelo histórico do usuário) */
+  duplicada?: { quando: string; nomeFinal: string; motivo: "chave" | "numero" } | null;
 }
+
+function snapshotDe(r: Row): Snapshot {
+  return { date: r.date, nfNumber: r.nfNumber, supplier: r.supplier, docType: r.docType, categoria: r.categoria };
+}
+
+/** Diferenças entre o que o sistema leu e o que o usuário deixou. */
+function correcoesDe(row: Row): CorrecaoRegistro[] {
+  const o = row.original;
+  if (!o) return [];
+  const base = { cnpj: row.cnpj ?? null, arquivo: row.file.name };
+  const itens: CorrecaoRegistro[] = [];
+  if (row.supplier.trim() && o.supplier.trim() !== row.supplier.trim())
+    itens.push({ ...base, campo: "fornecedor", valorExtraido: o.supplier || null, valorCorrigido: row.supplier });
+  if (o.categoria !== row.categoria)
+    itens.push({ ...base, campo: "categoria", valorExtraido: o.categoria, valorCorrigido: row.categoria });
+  if (row.date && o.date !== row.date)
+    itens.push({ ...base, campo: "data", valorExtraido: o.date || null, valorCorrigido: row.date });
+  if (row.nfNumber && o.nfNumber !== row.nfNumber)
+    itens.push({ ...base, campo: "numero", valorExtraido: o.nfNumber || null, valorCorrigido: row.nfNumber });
+  if (o.docType !== row.docType)
+    itens.push({ ...base, campo: "tipo", valorExtraido: o.docType, valorCorrigido: row.docType });
+  return itens;
+}
+
+function mensagemBanco(salvo: { configurado?: boolean; erro?: string }) {
+  return salvo.configurado === false
+    ? "Arquivos baixados, mas o histórico não foi salvo: falta configurar o banco (DATABASE_URL no .env.local)."
+    : `Arquivos baixados, mas não consegui salvar no histórico do banco (${salvo.erro ?? "erro"}).`;
+}
+
+const pausa = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function newId() {
   return Math.random().toString(36).slice(2, 10);
@@ -54,9 +127,18 @@ export default function Home() {
   const [rows, setRows] = useState<Row[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [baixando, setBaixando] = useState(false);
-  const [avisoBanco, setAvisoBanco] = useState("");
+  const setAvisoBanco = mostrarErro;
+  /** Ordenação da tabela: clique no cabeçalho alterna crescente, decrescente e original. */
+  const [ordem, setOrdem] = useState<{ campo: CampoOrdem; direcao: "asc" | "desc" } | null>(null);
   const [viewingId, setViewingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [totalCorrecoes, setTotalCorrecoes] = useState(0);
+
+  useEffect(() => {
+    resumoAprendizado().then((r) => {
+      if (r.ok && r.dados) setTotalCorrecoes(r.dados.total);
+    });
+  }, []);
 
   const addFiles = useCallback((fileList: FileList | File[]) => {
     const pdfFiles = Array.from(fileList).filter(
@@ -106,6 +188,14 @@ export default function Home() {
               direcao: data.direcao,
               chaveAcesso: data.chaveAcesso ?? undefined,
               confidence: data.confidence,
+              duplicada: data.duplicada ?? null,
+              original: {
+                date: data.date ?? "",
+                nfNumber: data.nfNumber ?? "",
+                supplier: data.supplier ?? "",
+                docType: (data.docType as TipoDoc) ?? "NFe",
+                categoria: (data.categoria as Categoria) ?? "padrao",
+              },
             }
             : r
         )
@@ -167,62 +257,162 @@ export default function Home() {
   const viewingIndex = rows.findIndex((r) => r.id === viewingId);
   const viewingRow = viewingIndex >= 0 ? rows[viewingIndex] : null;
   const readyCount = rows.filter((r) => r.status === "done" && suggestedName(r)).length;
+  const prontasLista = () => rows.filter((r) => r.status === "done" && suggestedName(r));
+  const categoriasProntas = ORDEM_CATEGORIA.map((c) => [c, prontasLista().filter((r) => r.categoria === c).length] as const).filter(
+    ([, n]) => n > 0
+  );
+  function alternarOrdem(campo: CampoOrdem) {
+    setOrdem((atual) => {
+      if (!atual || atual.campo !== campo) return { campo, direcao: "asc" };
+      if (atual.direcao === "asc") return { campo, direcao: "desc" };
+      return null;
+    });
+  }
 
-  /** Baixa cada PDF como arquivo solto, já com o nome final (sem .zip). */
-  async function baixarArquivos() {
-    const ready = rows.filter((r) => r.status === "done" && suggestedName(r));
-    if (ready.length === 0) return;
+  /** Ordem de status: pronto, conferir, revisar, processando, pendente, erro. */
+  const rankStatus = (r: Row): number => {
+    if (r.status === "error") return 5;
+    if (r.status === "pending") return 4;
+    if (r.status === "processing") return 3;
+    if (!suggestedName(r)) return 2;
+    return r.confidence === "baixa" ? 1 : 0;
+  };
 
+  /** Chave de comparação por coluna (sempre texto, para ordenar sem surpresas). */
+  const CHAVE_ORDEM: Record<CampoOrdem, (r: Row) => string> = {
+    arquivo: (r) => r.file.name.toLowerCase(),
+    data: (r) => {
+      const m = r.date.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+      return m ? `${m[3]}${m[2]}${m[1]}` : "";
+    },
+    tipo: (r) => `${r.docType}${r.nfNumber.padStart(12, "0")}`,
+    fornecedor: (r) => r.supplier.trim().toUpperCase(),
+    categoria: (r) => String(ORDEM_CATEGORIA.indexOf(r.categoria)).padStart(2, "0"),
+    status: (r) => String(rankStatus(r)),
+  };
+
+  const linhasOrdenadas = useMemo(() => {
+    if (!ordem) return rows;
+    const chave = CHAVE_ORDEM[ordem.campo];
+    const fator = ordem.direcao === "asc" ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const x = chave(a);
+      const y = chave(b);
+      // vazios ficam sempre no fim, em qualquer direção
+      if (x === "" && y !== "") return 1;
+      if (y === "" && x !== "") return -1;
+      return x < y ? -fator : x > y ? fator : 0;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, ordem]);
+
+  /** Cabeçalho clicável com seta indicando a ordem atual. */
+  const cabecalho = (campo: CampoOrdem, rotulo: string) => {
+    const ativo = ordem?.campo === campo;
+    const Icone = !ativo ? ArrowUpDown : ordem!.direcao === "asc" ? ArrowUp : ArrowDown;
+    return (
+      <button
+        onClick={() => alternarOrdem(campo)}
+        className={`inline-flex items-center gap-1 uppercase tracking-wide transition-colors hover:text-clayDark ${
+          ativo ? "text-clayDark" : ""
+        }`}
+        title="Clique para ordenar"
+      >
+        {rotulo}
+        <Icone size={12} className={ativo ? "" : "opacity-40"} />
+      </button>
+    );
+  };
+
+  /** Guarda no Histórico as notas que saíram e aprende com as correções feitas nelas. */
+  async function registrarSaida(lista: Row[]) {
+    const correcoes = lista.flatMap(correcoesDe);
+    const salvo = await adicionarHistorico(
+      lista.map((r) => ({
+        arquivoOriginal: r.file.name,
+        nomeFinal: suggestedName(r)!,
+        tipo: r.docType,
+        categoria: r.categoria,
+        data: r.date,
+        numero: r.nfNumber,
+        fornecedor: r.supplier,
+        cnpj: r.cnpj ?? null,
+        chaveAcesso: r.chaveAcesso ?? null,
+      }))
+    );
+    if (correcoes.length) {
+      const aprendidas = await registrarCorrecoes(correcoes);
+      if (aprendidas.ok) setTotalCorrecoes((t) => t + (aprendidas.dados?.gravados ?? 0));
+    }
+    // o valor atual passa a ser a referência: a mesma correção não conta duas vezes
+    const ids = new Set(lista.map((r) => r.id));
+    setRows((prev) => prev.map((r) => (ids.has(r.id) ? { ...r, original: snapshotDe(r) } : r)));
+    return salvo;
+  }
+
+  /** Baixa uma nota só, já com o nome final. */
+  async function baixarUma(row: Row) {
+    const nome = suggestedName(row);
+    if (!nome) return;
+    setAvisoBanco("");
+    baixarBlob(nome, row.file);
+    const salvo = await registrarSaida([row]);
+    if (!salvo.ok) setAvisoBanco(mensagemBanco(salvo));
+    else toast.success("Nota baixada e registrada no histórico.");
+  }
+
+  /**
+   * Baixa notas prontas: num .zip (uma pasta por categoria) ou soltas, agrupadas
+   * por categoria com Padrão primeiro. Os nomes são calculados sobre todas as
+   * notas prontas, assim o mesmo arquivo sai com o mesmo nome em qualquer grupo.
+   */
+  async function baixarLista(lista: Row[], modo: "zip" | "soltos") {
+    if (lista.length === 0) return;
     setBaixando(true);
     setAvisoBanco("");
     try {
-      const usedNames = new Set<string>();
-      for (const row of ready) {
-        let name = suggestedName(row)!;
-        if (usedNames.has(name)) {
-          const base = name.replace(/\.pdf$/i, "");
-          let i = 2;
-          while (usedNames.has(`${base} (${i}).pdf`)) i++;
-          name = `${base} (${i}).pdf`;
-        }
-        usedNames.add(name);
+      const todas = prontasLista();
+      const nomeDe = new Map<string, string>();
+      nomesUnicos(todas.map((r) => suggestedName(r)!)).forEach((n, i) => nomeDe.set(todas[i].id, n));
+      const ordenadas = [...lista].sort((a, b) => ORDEM_CATEGORIA.indexOf(a.categoria) - ORDEM_CATEGORIA.indexOf(b.categoria));
 
-        const url = URL.createObjectURL(new Blob([row.file], { type: "application/pdf" }));
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = name;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 30000);
-        // pequena pausa entre os downloads para o navegador não descartar nenhum
-        await new Promise((r) => setTimeout(r, 400));
-      }
-
-      // registra no Histórico (banco). Se falhar, os arquivos já foram baixados normalmente.
-      const salvo = await adicionarHistorico(
-        ready.map((r) => ({
-          arquivoOriginal: r.file.name,
-          nomeFinal: suggestedName(r)!,
-          tipo: r.docType,
-          categoria: r.categoria,
-          data: r.date,
-          numero: r.nfNumber,
-          fornecedor: r.supplier,
-          cnpj: r.cnpj ?? null,
-          chaveAcesso: r.chaveAcesso ?? null,
-        }))
-      );
-      if (!salvo.ok) {
-        setAvisoBanco(
-          salvo.configurado === false
-            ? "Arquivos baixados, mas o histórico não foi salvo: falta configurar o banco (DATABASE_URL no .env.local)."
-            : `Arquivos baixados, mas não consegui salvar no histórico do banco (${salvo.erro ?? "erro"}).`
+      if (modo === "zip") {
+        const zip = await gerarZip(
+          ordenadas.map((r) => ({ nome: nomeDe.get(r.id)!, arquivo: r.file, pasta: PASTA_CATEGORIA[r.categoria] }))
         );
+        baixarBlob(`notas-renomeadas-${new Date().toISOString().slice(0, 10)}.zip`, zip);
+      } else {
+        for (const r of ordenadas) {
+          baixarBlob(nomeDe.get(r.id)!, r.file);
+          // pequena pausa entre os downloads para o navegador não descartar nenhum
+          await pausa(400);
+        }
       }
+
+      const n = ordenadas.length;
+      const s_ = n === 1 ? "" : "s";
+      // registra no Histórico (banco). Se falhar, os arquivos já foram baixados normalmente.
+      const salvo = await registrarSaida(ordenadas);
+      if (!salvo.ok) setAvisoBanco(mensagemBanco(salvo));
+      else
+        toast.success(
+          modo === "zip"
+            ? `${n} nota${s_} no .zip, em pastas por categoria. Registrada${s_} no histórico.`
+            : `${n} arquivo${s_} baixado${s_}, agrupado${s_} por categoria. Registrado${s_} no histórico.`
+        );
+    } catch {
+      setAvisoBanco("Não consegui gerar os arquivos. Tente de novo.");
     } finally {
       setBaixando(false);
     }
+  }
+
+  function baixarTodas(modo: "zip" | "soltos") {
+    return baixarLista(prontasLista(), modo);
+  }
+
+  function baixarCategoria(categoria: Categoria) {
+    return baixarLista(prontasLista().filter((r) => r.categoria === categoria), "soltos");
   }
 
   return (
@@ -235,6 +425,12 @@ export default function Home() {
           <p className="mt-1 text-sm text-ink/60">
             Padrão: <span className="font-mono">{FILENAME_PATTERN}</span>
           </p>
+          {totalCorrecoes > 0 && (
+            <p className="mt-2 text-xs text-moss">
+              Já aprendi com {totalCorrecoes} correç{totalCorrecoes === 1 ? "ão" : "ões"} sua{totalCorrecoes === 1 ? "" : "s"}:
+              os nomes e categorias que você corrige passam a sair certos nas próximas notas.
+            </p>
+          )}
         </div>
 
         {/* Área de upload */}
@@ -298,17 +494,17 @@ export default function Home() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-ink/10 bg-sand/60 text-left text-xs uppercase tracking-wide text-ink/50">
-                    <th className="px-4 py-3 font-medium">Arquivo original</th>
-                    <th className="px-4 py-3 font-medium">Data</th>
-                    <th className="px-4 py-3 font-medium">Tipo / Nº</th>
-                    <th className="px-4 py-3 font-medium">Fornecedor</th>
-                    <th className="px-4 py-3 font-medium">Categoria</th>
-                    <th className="px-4 py-3 font-medium">Status</th>
+                    <th className="px-4 py-3 font-medium">{cabecalho("arquivo", "Arquivo original")}</th>
+                    <th className="px-4 py-3 font-medium">{cabecalho("data", "Data")}</th>
+                    <th className="px-4 py-3 font-medium">{cabecalho("tipo", "Tipo / Nº")}</th>
+                    <th className="px-4 py-3 font-medium">{cabecalho("fornecedor", "Fornecedor")}</th>
+                    <th className="px-4 py-3 font-medium">{cabecalho("categoria", "Categoria")}</th>
+                    <th className="px-4 py-3 font-medium">{cabecalho("status", "Status")}</th>
                     <th className="px-4 py-3"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => {
+                  {linhasOrdenadas.map((row) => {
                     const name = suggestedName(row);
                     return (
                       <tr
@@ -379,6 +575,15 @@ export default function Home() {
                           </select>
                         </td>
                         <td className="px-4 py-3">
+                          {row.duplicada && (
+                            <span
+                              className="mb-1 inline-flex items-center gap-1 text-xs text-amber-700"
+                              title={`Já renomeada em ${new Date(row.duplicada.quando).toLocaleDateString("pt-BR")} como: ${row.duplicada.nomeFinal}`}
+                            >
+                              <AlertTriangle size={14} />
+                              {row.duplicada.motivo === "chave" ? "já renomeada" : "possível duplicata"}
+                            </span>
+                          )}
                           {row.status === "processing" && (
                             <span className="inline-flex items-center gap-1 text-xs text-ink/50">
                               <Loader2 size={14} className="animate-spin" /> lendo
@@ -410,6 +615,14 @@ export default function Home() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-3">
+                            <button
+                              onClick={() => baixarUma(row)}
+                              disabled={row.status !== "done" || !suggestedName(row)}
+                              className="text-ink/40 hover:text-clayDark disabled:cursor-not-allowed disabled:opacity-30"
+                              title="Baixar só esta nota, já renomeada"
+                            >
+                              <Download size={15} />
+                            </button>
                             <button
                               onClick={() => setViewingId(row.id)}
                               className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-ink/15 bg-white px-2 py-1 text-xs text-ink/70 hover:border-clay hover:text-clayDark"
@@ -454,24 +667,51 @@ export default function Home() {
               </div>
             )}
 
-            <button
-              onClick={baixarArquivos}
-              disabled={readyCount === 0 || baixando}
-              className="mt-5 flex items-center gap-2 rounded-xl bg-clay px-5 py-3 text-sm font-medium text-paper shadow-sm transition-colors hover:bg-clayDark disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {baixando ? (
-                <Loader2 size={16} className="animate-spin" />
-              ) : (
-                <Download size={16} />
+            <div className="mt-5 space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={() => baixarTodas("zip")}
+                  disabled={readyCount === 0 || baixando}
+                  className="flex items-center gap-2 rounded-xl bg-clay px-5 py-3 text-sm font-medium text-paper shadow-sm transition-colors hover:bg-clayDark disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {baixando ? <Loader2 size={16} className="animate-spin" /> : <Archive size={16} />}
+                  Baixar .zip ({readyCount})
+                </button>
+                <button
+                  onClick={() => baixarTodas("soltos")}
+                  disabled={readyCount === 0 || baixando}
+                  className="flex items-center gap-2 rounded-xl border border-ink/15 bg-white px-5 py-3 text-sm font-medium text-ink/80 shadow-sm transition-colors hover:border-clay hover:text-clayDark disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Download size={16} />
+                  Baixar arquivos soltos
+                </button>
+              </div>
+
+              {categoriasProntas.length > 0 && (
+                <div className="rounded-xl border border-ink/10 bg-white/60 px-4 py-3">
+                  <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink/40">
+                    Baixar só uma categoria (soltos)
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {categoriasProntas.map(([cat, n]) => (
+                      <button
+                        key={cat}
+                        onClick={() => baixarCategoria(cat)}
+                        disabled={baixando}
+                        className="rounded-lg border border-ink/15 bg-white px-3 py-1.5 text-xs font-medium text-ink/70 hover:border-clay hover:text-clayDark disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {PASTA_CATEGORIA[cat]} ({n})
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
-              Baixar {readyCount > 0 ? readyCount : ""} arquivo
-              {readyCount !== 1 ? "s" : ""} renomeado{readyCount !== 1 ? "s" : ""}
-            </button>
-            {avisoBanco && (
-              <p className="mt-3 flex items-start gap-1.5 text-xs text-clayDark">
-                <AlertTriangle size={14} className="mt-0.5 shrink-0" /> {avisoBanco}
+
+              <p className="text-xs text-ink/50">
+                O .zip tem uma pasta por categoria. Os soltos saem agrupados por categoria, com Padrão primeiro. Cada nota
+                também pode ser baixada sozinha pelo ícone na tabela.
               </p>
-            )}
+            </div>
           </div>
         )}
       </div>

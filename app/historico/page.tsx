@@ -1,5 +1,6 @@
 "use client";
 
+import { mostrarErro } from "@/lib/notificar";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Download, Search, Trash2, History as HistoryIcon, Copy, Check, Loader2, AlertTriangle } from "lucide-react";
@@ -23,7 +24,7 @@ function formatarQuando(iso: string) {
 export default function HistoricoPage() {
   const [lista, setLista] = useState<RegistroHistorico[]>([]);
   const [carregado, setCarregado] = useState(false);
-  const [erro, setErro] = useState("");
+  const setErro = mostrarErro;
   const [busca, setBusca] = useState("");
   const [tipo, setTipo] = useState<"todos" | "NFe" | "NFSe">("todos");
   const [copiado, setCopiado] = useState<string | null>(null);
@@ -124,11 +125,6 @@ export default function HistoricoPage() {
 
         <ImportarLocal onImportado={carregar} />
 
-        {erro && (
-          <p className="mb-4 flex items-start gap-1.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            <AlertTriangle size={16} className="mt-0.5 shrink-0" /> {erro}
-          </p>
-        )}
 
         {!carregado && (
           <p className="mb-4 flex items-center gap-2 text-sm text-ink/50">
@@ -172,7 +168,7 @@ export default function HistoricoPage() {
           </select>
         </div>
 
-        {carregado && !erro && lista.length === 0 ? (
+        {carregado && lista.length === 0 ? (
           <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-ink/15 bg-white/50 px-6 py-16 text-center">
             <HistoryIcon size={32} className="text-ink/30" />
             <p className="font-medium">Nada por aqui ainda</p>

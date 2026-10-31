@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import AppHeader from "@/components/AppHeader";
 import AppFooter from "@/components/AppFooter";
+import Toaster from "@/components/Toaster";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -22,6 +23,7 @@ export default function RootLayout({
         <AppHeader />
         <div className="flex-1">{children}</div>
         <AppFooter />
+        <Toaster />
       </body>
     </html>
   );

@@ -1,6 +1,11 @@
+"use client";
+
+import { usePathname } from "next/navigation";
 import { APP_NAME, APP_SUBTITLE, APP_VERSION, FILENAME_PATTERN } from "@/lib/app-info";
 
 export default function AppFooter() {
+    const pathname = usePathname();
+    if (pathname === "/entrar") return null;
     const year = new Date().getFullYear();
 
     return (

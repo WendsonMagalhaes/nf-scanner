@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { DatabaseZap, Loader2 } from "lucide-react";
 import { importarLocalParaBanco, lerPendenteLocal, totalPendenteLocal, type PendenteLocal } from "@/lib/storage";
+import { mostrarErro } from "@/lib/notificar";
 
 /**
  * Aviso que aparece só se ainda houver dados antigos neste navegador
@@ -11,7 +12,7 @@ import { importarLocalParaBanco, lerPendenteLocal, totalPendenteLocal, type Pend
 export default function ImportarLocal({ onImportado }: { onImportado: () => void }) {
   const [pendente, setPendente] = useState<PendenteLocal | null>(null);
   const [enviando, setEnviando] = useState(false);
-  const [erro, setErro] = useState("");
+  const setErro = mostrarErro;
 
   useEffect(() => {
     const p = lerPendenteLocal();
@@ -51,7 +52,6 @@ export default function ImportarLocal({ onImportado }: { onImportado: () => void
           {enviando && <Loader2 size={14} className="animate-spin" />} Enviar para o banco
         </button>
       </div>
-      {erro && <p className="mt-2 text-xs text-red-600">{erro}</p>}
     </div>
   );
 }

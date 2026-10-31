@@ -50,6 +50,10 @@ async function chamar<T>(url: string, init?: RequestInit): Promise<Resultado<T>>
   try {
     const res = await fetch(url, { cache: "no-store", ...init });
     const json = await res.json().catch(() => ({}));
+    // sessão expirada ou sem login: manda para a tela de entrar
+    if (res.status === 401 && typeof window !== "undefined" && !window.location.pathname.startsWith("/entrar")) {
+      window.location.href = `/entrar?next=${encodeURIComponent(window.location.pathname)}`;
+    }
     if (!res.ok) return { ok: false, erro: json?.error ?? `Erro ${res.status}`, configurado: json?.configurado };
     return { ok: true, dados: json as T };
   } catch {
@@ -197,4 +201,27 @@ export async function importarLocalParaBanco(p: PendenteLocal = lerPendenteLocal
     /* sem localStorage: nada a apagar */
   }
   return { ok: true, dados: { historico: p.historico.length, fornecedores: fornecedores.length } };
+}
+
+/* ------------------------------- Aprendizado ------------------------------ */
+
+export interface CorrecaoRegistro {
+  campo: "fornecedor" | "categoria" | "data" | "numero" | "tipo";
+  cnpj?: string | null;
+  arquivo?: string | null;
+  valorExtraido?: string | null;
+  valorCorrigido: string;
+}
+
+/** Guarda as correções que o usuário fez na tela (o sistema aprende com elas). */
+export function registrarCorrecoes(itens: CorrecaoRegistro[]) {
+  return chamar<{ gravados: number }>("/api/correcoes", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ itens }),
+  });
+}
+
+export function resumoAprendizado() {
+  return chamar<{ total: number }>("/api/correcoes");
 }

@@ -86,3 +86,26 @@ Se os PDFs de um fornecedor específico sempre errarem, ajuste as funções
 - pdfjs-dist + @napi-rs/canvas (renderiza páginas escaneadas, servidor)
 - tesseract.js + @tesseract.js-data/por (OCR em português, servidor)
 - @neondatabase/serverless (Postgres no Neon: histórico e fornecedores)
+
+## Login e contas
+
+- Tudo exige login. Na primeira execução, crie a conta pela tela **Criar conta**:
+  o primeiro cadastro é o administrador e recebe também os dados que já estavam no banco.
+- Os demais usuários só se cadastram com `CADASTRO_ABERTO=1` no `.env.local`
+  (depois de criar as contas, volte para `0`).
+- Defina `AUTH_SECRET` (use `openssl rand -hex 32`). Sem ele, em produção o app não sobe.
+- Histórico, fornecedores e correções são separados por conta.
+
+## Download das notas
+
+- **Uma por vez:** ícone de download na linha da nota.
+- **.zip:** todas as prontas num arquivo só.
+- **Arquivos soltos:** todas, uma a uma.
+
+## Aprendizado com as correções
+
+Cada vez que você corrige um campo lido do PDF (fornecedor, categoria, data, número, tipo),
+a correção fica guardada na sua conta (tabela `nf_correcoes`). Quando o mesmo nome lido errado
+aparecer de novo, o sistema já sai com o nome certo. A categoria e o nome de cada CNPJ também
+são memorizados. Hoje é uma memória de correções, não um modelo treinado: o log de correções
+é a base para evoluir a leitura no futuro.

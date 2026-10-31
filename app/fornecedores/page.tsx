@@ -1,5 +1,6 @@
 "use client";
 
+import { mostrarErro } from "@/lib/notificar";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Search, Trash2, Download, Upload, Lock, Loader2, AlertTriangle } from "lucide-react";
 import { FORNECEDORES, categoriaCompraPorCnpj, type CategoriaCompra } from "@/lib/fornecedores";
@@ -29,8 +30,8 @@ export default function FornecedoresPage() {
   const [carregado, setCarregado] = useState(false);
   const [cnpj, setCnpj] = useState("");
   const [nome, setNome] = useState("");
-  const [erro, setErro] = useState("");
-  const [erroBanco, setErroBanco] = useState("");
+  const setErro = mostrarErro;
+  const setErroBanco = mostrarErro;
   const [busca, setBusca] = useState("");
   const arquivoRef = useRef<HTMLInputElement>(null);
 
@@ -160,12 +161,6 @@ export default function FornecedoresPage() {
 
         <ImportarLocal onImportado={carregar} />
 
-        {erroBanco && (
-          <p className="mb-4 flex items-start gap-1.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            <AlertTriangle size={16} className="mt-0.5 shrink-0" /> {erroBanco}
-          </p>
-        )}
-
         {/* Adicionar */}
         <div className="rounded-2xl border border-ink/10 bg-white/60 p-4">
           <p className="mb-3 text-xs font-medium uppercase tracking-wide text-ink/50">Novo fornecedor</p>
@@ -190,7 +185,6 @@ export default function FornecedoresPage() {
               <Plus size={15} /> Adicionar
             </button>
           </div>
-          {erro && <p className="mt-2 text-xs text-red-600">{erro}</p>}
           <p className="mt-2 text-[0.6875rem] text-ink/40">
             Vale para todas as filiais (usa os 8 primeiros dígitos do CNPJ).
           </p>
